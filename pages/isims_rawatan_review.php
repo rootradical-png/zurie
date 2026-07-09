@@ -84,8 +84,8 @@ function raw_columns(): array
 
 function raw_inputs(array $source): array
 {
-    $limit = isset($source['limit']) ? (int)$source['limit'] : 100;
-    $limit = max(1, min(1000, $limit));
+    $limit = isset($source['limit']) ? (int)$source['limit'] : 20;
+    $limit = max(1, min(200, $limit));
     $nosiri = trim((string)($source['nosiri'] ?? ''));
     $nomatrik = strtoupper(trim((string)($source['nomatrik'] ?? '')));
     $nama = trim((string)($source['nama'] ?? ''));
@@ -121,12 +121,11 @@ function raw_fetch_rows(PDO $pdo, array $config, array $input): array
 {
     $params = [];
     $where = raw_build_where($input, $params);
-    if ($where === '') {
-        throw new RuntimeException('Masukkan sekurang-kurangnya No Siri, No Matrik atau Nama sebelum extract.');
-    }
 
     $table = raw_table_ref($config);
-    $sql = 'SELECT ' . implode(', ', array_map(static fn($c) => '`' . $c . '`', raw_columns())) . " FROM {$table}{$where} ORDER BY `nosiri` DESC, `keyin_tarikh` DESC, `keyin_masa` DESC, `nomatrik` ASC LIMIT " . (int)$input['limit'];
+    $select = 'SELECT ' . implode(', ', array_map(static fn($c) => '`' . $c . '`', raw_columns()));
+    $order = ' ORDER BY `keyin_tarikh` DESC, `keyin_masa` DESC, `nosiri` DESC, `nomatrik` ASC';
+    $sql = $select . " FROM {$table}{$where}{$order} LIMIT " . (int)$input['limit'];
     $stmt = $pdo->prepare($sql);
     foreach ($params as $key => $value) {
         $stmt->bindValue($key, $value, $key === ':nosiri' ? PDO::PARAM_INT : PDO::PARAM_STR);
@@ -218,7 +217,7 @@ function raw_output_csv(array $rows): void
 
 $config = raw_config();
 $input = raw_inputs($_REQUEST);
-$action = (string)($_POST['action'] ?? $_GET['action'] ?? '');
+$action = (string)($_POST['action'] ?? $_GET['action'] ?? 'latest');
 $error = '';
 $success = '';
 $rows = [];
@@ -234,8 +233,8 @@ try {
         $identity = raw_identity($pdo);
         $count = (int)$pdo->query('SELECT COUNT(*) FROM ' . raw_table_ref($config))->fetchColumn();
         $success = 'Sambungan i-SIMS OK. Table rawatan boleh dibaca. Jumlah rekod: ' . number_format($count);
-    } elseif ($action === 'preview' || $action === 'csv') {
-        if ($action === 'preview') {
+    } elseif (in_array($action, ['latest', 'preview', 'search', 'csv'], true)) {
+        if ($action === 'preview' || $action === 'search') {
             zurie_security_require_valid_csrf();
         }
         $pdo = raw_connect($config);
@@ -243,7 +242,8 @@ try {
         if ($action === 'csv') {
             raw_output_csv($rows);
         }
-        $success = 'Extract berjaya. ' . count($rows) . ' rekod dipaparkan untuk semakan.';
+        $label = ($input['nosiri'] !== '' || $input['nomatrik'] !== '' || $input['nama'] !== '') ? 'Carian berjaya.' : '20 rekod terkini dipaparkan.';
+        $success = $label . ' ' . count($rows) . ' rekod untuk semakan.';
     } elseif ($action === 'duplicates') {
         zurie_security_require_valid_csrf();
         $pdo = raw_connect($config);
@@ -285,7 +285,7 @@ try {
 <head>
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1.0">
-<title>i-SIMS Rawatan — Semak & Padam No Siri</title>
+<title>i-SIMS Rawatan — Extract, Search & Padam Rekod Salah</title>
 <link rel="icon" href="/zurie/image/zuriex.jpg">
 <style>
 :root{--bg:#07111f;--card:#0d1c2e;--line:rgba(130,170,210,.18);--text:#eaf4ff;--muted:#86a0b8;--cyan:#55d9ff;--green:#51e3a4;--red:#ff7183;--yellow:#ffd36a}*{box-sizing:border-box}body{margin:0;background:radial-gradient(circle at top left,#123456 0,#07111f 36%,#040b14 100%);color:var(--text);font-family:Segoe UI,Arial,sans-serif;font-size:13px}.wrap{max-width:1450px;margin:0 auto;padding:18px}.top{display:flex;justify-content:space-between;align-items:center;gap:14px;margin-bottom:14px}.top a{color:#9ddfff;text-decoration:none}.title h1{margin:0;font-size:22px}.title p{margin:4px 0 0;color:var(--muted)}.card{background:linear-gradient(145deg,rgba(13,28,46,.96),rgba(8,18,31,.96));border:1px solid var(--line);border-radius:16px;box-shadow:0 18px 50px rgba(0,0,0,.25);padding:16px;margin-bottom:14px}.status-grid{display:grid;grid-template-columns:repeat(4,minmax(0,1fr));gap:10px}.status{padding:10px;border:1px solid var(--line);border-radius:11px;background:rgba(255,255,255,.02)}.status span{display:block;color:var(--muted);font-size:10px}.status b{display:block;margin-top:3px}.ok{color:var(--green)}.bad{color:var(--red)}.grid{display:grid;grid-template-columns:repeat(4,minmax(0,1fr));gap:12px}.field label{display:block;color:var(--muted);font-size:11px;margin-bottom:5px;text-transform:uppercase;letter-spacing:.05em}.field input{width:100%;border:1px solid rgba(130,170,210,.25);background:#081523;color:var(--text);border-radius:10px;padding:10px 11px;outline:none}.field input:focus{border-color:var(--cyan);box-shadow:0 0 0 3px rgba(85,217,255,.09)}.actions{display:flex;gap:10px;flex-wrap:wrap;align-items:center;margin-top:14px}.btn{border:1px solid rgba(85,217,255,.32);background:rgba(85,217,255,.10);color:#bff0ff;border-radius:10px;padding:10px 13px;text-decoration:none;cursor:pointer;font-weight:700}.btn.primary{background:linear-gradient(135deg,rgba(85,217,255,.22),rgba(81,227,164,.14));border-color:rgba(85,217,255,.55)}.btn.export{background:linear-gradient(135deg,rgba(81,227,164,.22),rgba(85,217,255,.12));border-color:rgba(81,227,164,.5);color:#aaffd9}.btn.danger{background:rgba(255,113,131,.11);border-color:rgba(255,113,131,.55);color:#ffd2d8}.alert{padding:11px 13px;border-radius:11px;margin-bottom:13px}.alert.error{border:1px solid rgba(255,113,131,.3);background:rgba(255,113,131,.08);color:#ffc1c9}.alert.success{border:1px solid rgba(81,227,164,.28);background:rgba(81,227,164,.08);color:#aaffd9}.note{color:var(--muted);font-size:12px;line-height:1.6}.note code{color:#c9efff;background:#06111d;padding:2px 5px;border-radius:5px}.danger-note{border:1px dashed rgba(255,113,131,.45);background:rgba(255,113,131,.06);color:#ffd2d8;border-radius:12px;padding:10px 12px;margin-top:12px}.preview-wrap{overflow:auto;max-height:610px;border:1px solid var(--line);border-radius:12px}.preview{width:100%;border-collapse:collapse;font-size:11px;white-space:nowrap}.preview th,.preview td{padding:7px 9px;border-bottom:1px solid rgba(130,170,210,.1);border-right:1px solid rgba(130,170,210,.07);text-align:left}.preview th{position:sticky;top:0;background:#10263d;color:#9de7ff;z-index:1}.preview td{color:#c4d5e4}.preview tr:hover td{background:rgba(85,217,255,.04)}.mini-table{width:100%;border-collapse:collapse}.mini-table th,.mini-table td{padding:9px;border-bottom:1px solid rgba(130,170,210,.1);text-align:left}.mini-table th{color:#9de7ff}.confirm-delete{display:flex;gap:10px;align-items:end;flex-wrap:wrap;margin-top:14px}.confirm-delete input{min-width:180px;border:1px solid rgba(255,113,131,.35);background:#081523;color:var(--text);border-radius:10px;padding:10px 11px}@media(max-width:850px){.grid,.status-grid{grid-template-columns:repeat(2,1fr)}.top{display:block}.wrap{padding:12px}}@media(max-width:520px){.grid,.status-grid{grid-template-columns:1fr}}
@@ -295,8 +295,8 @@ try {
 <div class="wrap">
   <div class="top">
     <div class="title">
-      <h1>i-SIMS — Rawatan: Semak &amp; Padam No Siri Salah</h1>
-      <p>Extract rekod rawatan dahulu untuk confirm sebelum memadam rekod salah/double key-in.</p>
+      <h1>i-SIMS — Rawatan: Extract 20 Terkini &amp; Padam Rekod Salah</h1>
+      <p>Paparkan 20 rekod rawatan terkini, cari ikut No Siri, kemudian padam rekod yang tersalah key-in dua kali.</p>
     </div>
     <a href="../index.php">← Dashboard</a>
   </div>
@@ -320,17 +320,16 @@ try {
       <div class="field"><label>No Siri</label><input name="nosiri" value="<?= raw_e($input['nosiri']) ?>" inputmode="numeric" placeholder="Contoh: 12345"></div>
       <div class="field"><label>No Matrik</label><input name="nomatrik" value="<?= raw_e($input['nomatrik']) ?>" placeholder="MA/MS..."></div>
       <div class="field"><label>Nama</label><input name="nama" value="<?= raw_e($input['nama']) ?>" placeholder="Carian nama"></div>
-      <div class="field"><label>Had Rekod</label><input name="limit" value="<?= (int)$input['limit'] ?>" type="number" min="1" max="1000"></div>
+      <div class="field"><label>Had Rekod</label><input name="limit" value="<?= (int)$input['limit'] ?>" type="number" min="1" max="200"></div>
     </div>
     <div class="actions">
       <button class="btn" type="submit" name="action" value="test">Test i-SIMS</button>
-      <button class="btn primary" type="submit" name="action" value="preview">Extract / Preview</button>
-      <button class="btn" type="submit" name="action" value="duplicates">Semak No Siri Duplicate</button>
-      <?php if ($input['nosiri'] !== '' || $input['nomatrik'] !== '' || $input['nama'] !== ''): ?>
-        <a class="btn export" href="isims_rawatan_review.php?action=csv&amp;nosiri=<?= raw_e($input['nosiri']) ?>&amp;nomatrik=<?= raw_e($input['nomatrik']) ?>&amp;nama=<?= raw_e($input['nama']) ?>&amp;limit=<?= (int)$input['limit'] ?>">Download CSV</a>
-      <?php endif; ?>
+      <a class="btn primary" href="isims_rawatan_review.php?action=latest&amp;limit=20">Extract 20 Terkini</a>
+      <button class="btn primary" type="submit" name="action" value="search">Search / Preview</button>
+      <a class="btn export" href="isims_rawatan_review.php?action=csv&amp;nosiri=<?= raw_e($input['nosiri']) ?>&amp;nomatrik=<?= raw_e($input['nomatrik']) ?>&amp;nama=<?= raw_e($input['nama']) ?>&amp;limit=<?= (int)$input['limit'] ?>">Download CSV</a>
+      <a class="btn" href="/zurie/pages/isims_sync.php">Sync i-SIMS</a>
     </div>
-    <div class="danger-note">Tip selamat: masukkan No Siri yang hendak disemak, tekan <b>Extract / Preview</b>, download CSV jika perlu, baru pilih rekod yang benar-benar salah untuk dipadam.</div>
+    <div class="danger-note">Aliran selamat: semak 20 data terkini atau cari No Siri → confirm rekod yang salah/double key-in → pilih rekod → taip <b>PADAM</b>.</div>
   </form>
 
   <?php if ($duplicates): ?>
@@ -361,7 +360,7 @@ try {
     <input type="hidden" name="nomatrik" value="<?= raw_e($input['nomatrik']) ?>">
     <input type="hidden" name="nama" value="<?= raw_e($input['nama']) ?>">
     <input type="hidden" name="limit" value="<?= (int)$input['limit'] ?>">
-    <h2 style="margin-top:0;font-size:15px">Preview Rekod Rawatan — <?= count($rows) ?> rekod</h2>
+    <h2 style="margin-top:0;font-size:15px">Senarai Rekod Rawatan — <?= count($rows) ?> rekod</h2>
     <div class="preview-wrap"><table class="preview">
       <thead><tr><th>Pilih</th><?php foreach (raw_columns() as $column): ?><th><?= raw_e($column) ?></th><?php endforeach; ?></tr></thead>
       <tbody>
