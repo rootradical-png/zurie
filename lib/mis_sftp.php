@@ -430,7 +430,7 @@ function zurie_mis_sftp_list_photo_files(?array $config = null): array
     }
 
     $remoteDir = (string)$status['remote_dir'];
-    $allowedExtensions = ['jpg', 'jpeg', 'png', 'webp', 'gif', 'bmp'];
+    $allowedExtensions = ['jpg', 'jpeg', 'png'];
     $files = [];
 
     if ($status['driver'] === 'winscp') {

@@ -36,13 +36,28 @@ function pv_clean_matrik(string $value): string
 
 function pv_extract_matrik(string $filename): string
 {
-    $upper = strtoupper($filename);
-    if (preg_match('/(?:^|[^A-Z0-9])([A-Z]{2}\d{10})(?:[^A-Z0-9]|$)/', $upper, $m)) {
-        return pv_clean_matrik((string)$m[1]);
+    /*
+     * Fail MIS menggunakan No. Matrik di bahagian hadapan. Perbezaan utama
+     * hanyalah format fail, contohnya:
+     *   MA2614110409.jpg
+     *   MA2614110409.jpeg
+     *   MA2614110409.png
+     *
+     * Ambil No. Matrik daripada awal nama fail tanpa bergantung pada panjang
+     * tetap. Suffix seperti " (1)", "_1" atau "-copy" masih dibenarkan.
+     */
+    $decoded = rawurldecode(basename(str_replace('\\', '/', $filename)));
+    $stem = strtoupper(trim((string)pathinfo($decoded, PATHINFO_FILENAME)));
+
+    if (preg_match('/^([A-Z]{1,5}[0-9]{6,20})(?=$|[^A-Z0-9])/', $stem, $match)) {
+        return pv_clean_matrik((string)$match[1]);
     }
-    if (preg_match('/([A-Z]{2}\d{10})/', $upper, $m)) {
-        return pv_clean_matrik((string)$m[1]);
+
+    // Kes biasa: keseluruhan nama sebelum extension ialah No. Matrik.
+    if (preg_match('/^[A-Z0-9]{8,30}$/', $stem)) {
+        return pv_clean_matrik($stem);
     }
+
     return '';
 }
 
@@ -272,9 +287,15 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
             }
             $files = is_array($result['files'] ?? null) ? $result['files'] : [];
             pv_save_manifest($files);
-            $_SESSION['photo_versions_message'] = (string)$result['message'] . ' Senarai telah dikumpulkan mengikut No. Matrik.';
+            $scanGroups = pv_group_files($files);
+            $matchedCount = array_sum(array_map('count', $scanGroups));
+            $duplicateGroups = count(array_filter($scanGroups, static fn(array $items): bool => count($items) >= 2));
+            $unmatchedCount = max(0, count($files) - $matchedCount);
+            $_SESSION['photo_versions_message'] = (string)$result['message']
+                . ' Dipadankan: ' . $matchedCount . ' fail, kumpulan 2+ versi: ' . $duplicateGroups
+                . ', tidak dapat dipadankan: ' . $unmatchedCount . '.';
             $_SESSION['photo_versions_message_type'] = 'ok';
-            pv_redirect();
+            pv_redirect(['view' => 'duplicate']);
         }
 
         if ($action === 'select') {
@@ -388,9 +409,24 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
 }
 
 $manifest = pv_load_manifest();
-$groups = pv_group_files((array)($manifest['files'] ?? []));
+$manifestFiles = (array)($manifest['files'] ?? []);
+$groups = pv_group_files($manifestFiles);
 $reviews = pv_reviews($pdo);
 $names = pv_student_names($pdo, array_keys($groups));
+
+$matchedFileCount = array_sum(array_map('count', $groups));
+$unmatchedFiles = [];
+$extensionCounts = [];
+foreach ($manifestFiles as $manifestFile) {
+    if (!is_array($manifestFile)) continue;
+    $filename = (string)($manifestFile['filename'] ?? '');
+    $ext = strtolower((string)($manifestFile['extension'] ?? pathinfo($filename, PATHINFO_EXTENSION)));
+    if ($ext !== '') $extensionCounts[$ext] = ($extensionCounts[$ext] ?? 0) + 1;
+    if ($filename !== '' && pv_extract_matrik($filename) === '') {
+        $unmatchedFiles[] = $filename;
+    }
+}
+ksort($extensionCounts);
 
 $q = trim((string)($_GET['q'] ?? ''));
 $view = (string)($_GET['view'] ?? 'duplicate');
@@ -431,7 +467,7 @@ $scanVersion = rawurlencode((string)($manifest['scanned_at'] ?? ''));
 <title>Semakan Versi Gambar MIS | Zurie</title>
 <style>
 :root{--blue:#2563eb;--green:#16a34a;--yellow:#d97706;--red:#dc2626;--ink:#0f172a;--muted:#64748b;--line:#dbe3ef;--bg:#f3f7fc}
-*{box-sizing:border-box}body{margin:0;background:var(--bg);font-family:Arial,sans-serif;color:var(--ink)}.wrap{max-width:1450px;margin:24px auto;padding:0 16px 50px}.card{background:#fff;border:1px solid #e5eaf2;border-radius:18px;padding:18px;box-shadow:0 9px 28px rgba(15,23,42,.06);margin-bottom:16px}.head{display:flex;justify-content:space-between;gap:14px;align-items:flex-start;flex-wrap:wrap}.title{font-size:27px;margin:0 0 7px}.muted{color:var(--muted)}.breadcrumb{font-size:13px;display:flex;gap:7px;flex-wrap:wrap;margin-bottom:12px}.breadcrumb a{color:var(--blue);text-decoration:none;font-weight:700}.btn{border:0;border-radius:10px;padding:10px 14px;background:var(--blue);color:#fff;font-weight:800;text-decoration:none;cursor:pointer;display:inline-flex;align-items:center;gap:6px}.btn.secondary{background:#e2e8f0;color:var(--ink)}.btn.green{background:var(--green)}.btn.red{background:var(--red)}.btn:disabled{opacity:.55;cursor:not-allowed}.toolbar{display:flex;gap:9px;align-items:center;flex-wrap:wrap}.toolbar input,.toolbar select{border:1px solid #cbd5e1;border-radius:10px;padding:10px;background:#fff;min-width:190px}.stats{display:grid;grid-template-columns:repeat(4,minmax(0,1fr));gap:12px}.stat{border-radius:15px;padding:15px;border:1px solid var(--line);text-decoration:none;color:inherit}.stat b{font-size:25px;display:block;margin-bottom:5px}.stat.blue{background:#eff6ff}.stat.yellow{background:#fff7ed}.stat.green{background:#f0fdf4}.stat.red{background:#fef2f2}.notice{padding:13px 15px;border-radius:12px;margin-bottom:15px;font-weight:700}.notice.ok{background:#dcfce7;color:#166534}.notice.bad{background:#fee2e2;color:#991b1b}.group{border:2px solid #e2e8f0;border-radius:18px;background:#fff;margin-bottom:18px;overflow:hidden}.group.pending{border-color:#f59e0b}.group.selected{border-color:#22c55e}.group-head{display:flex;justify-content:space-between;gap:12px;align-items:center;padding:14px 16px;background:#f8fafc;flex-wrap:wrap}.group-head h2{margin:0;font-size:19px}.badge{display:inline-block;padding:5px 9px;border-radius:999px;font-size:12px;font-weight:900}.badge.yellow{background:#ffedd5;color:#9a3412}.badge.green{background:#dcfce7;color:#166534}.badge.red{background:#fee2e2;color:#991b1b}.photos{display:grid;grid-template-columns:repeat(auto-fill,minmax(210px,1fr));gap:14px;padding:16px}.photo{border:1px solid var(--line);border-radius:14px;padding:10px;background:#fff;position:relative}.photo.selected-source{outline:3px solid #22c55e}.preview{width:100%;height:245px;object-fit:contain;background:linear-gradient(45deg,#eef2f7 25%,transparent 25%),linear-gradient(-45deg,#eef2f7 25%,transparent 25%),linear-gradient(45deg,transparent 75%,#eef2f7 75%),linear-gradient(-45deg,transparent 75%,#eef2f7 75%);background-size:20px 20px;background-position:0 0,0 10px,10px -10px,-10px 0;border-radius:10px}.meta{font-size:12px;line-height:1.55;color:#475569;margin-top:9px;word-break:break-word}.filename{font-weight:900;color:#0f172a}.radio{display:flex;align-items:center;gap:7px;margin-top:9px;font-weight:800}.warning{font-size:12px;color:#b45309;background:#fff7ed;padding:7px;border-radius:8px;margin-top:7px}.group-action{padding:0 16px 16px;display:flex;gap:10px;align-items:center;flex-wrap:wrap}.report-box{background:#fff7ed;border:1px solid #fed7aa;border-radius:12px;padding:11px;font-size:13px;line-height:1.55;flex:1;min-width:260px}.pagination{display:flex;gap:7px;flex-wrap:wrap;justify-content:center;margin:20px 0}.pagination a,.pagination span{padding:8px 11px;border-radius:9px;background:#fff;border:1px solid var(--line);text-decoration:none;color:var(--ink)}.pagination .active{background:var(--blue);color:#fff}.empty{text-align:center;padding:45px 15px;color:var(--muted)}code{background:#f1f5f9;border-radius:5px;padding:2px 5px}@media(max-width:850px){.stats{grid-template-columns:repeat(2,minmax(0,1fr))}.preview{height:220px}}@media(max-width:520px){.stats{grid-template-columns:1fr}.toolbar input,.toolbar select{width:100%;min-width:0}.btn{justify-content:center}.photos{grid-template-columns:1fr}}
+*{box-sizing:border-box}body{margin:0;background:var(--bg);font-family:Arial,sans-serif;color:var(--ink)}.wrap{max-width:1450px;margin:24px auto;padding:0 16px 50px}.card{background:#fff;border:1px solid #e5eaf2;border-radius:18px;padding:18px;box-shadow:0 9px 28px rgba(15,23,42,.06);margin-bottom:16px}.head{display:flex;justify-content:space-between;gap:14px;align-items:flex-start;flex-wrap:wrap}.title{font-size:27px;margin:0 0 7px}.muted{color:var(--muted)}.breadcrumb{font-size:13px;display:flex;gap:7px;flex-wrap:wrap;margin-bottom:12px}.breadcrumb a{color:var(--blue);text-decoration:none;font-weight:700}.btn{border:0;border-radius:10px;padding:10px 14px;background:var(--blue);color:#fff;font-weight:800;text-decoration:none;cursor:pointer;display:inline-flex;align-items:center;gap:6px}.btn.secondary{background:#e2e8f0;color:var(--ink)}.btn.green{background:var(--green)}.btn.red{background:var(--red)}.btn:disabled{opacity:.55;cursor:not-allowed}.toolbar{display:flex;gap:9px;align-items:center;flex-wrap:wrap}.toolbar input,.toolbar select{border:1px solid #cbd5e1;border-radius:10px;padding:10px;background:#fff;min-width:190px}.stats{display:grid;grid-template-columns:repeat(4,minmax(0,1fr));gap:12px}.stat{border-radius:15px;padding:15px;border:1px solid var(--line);text-decoration:none;color:inherit}.stat b{font-size:25px;display:block;margin-bottom:5px}.stat.blue{background:#eff6ff}.stat.yellow{background:#fff7ed}.stat.green{background:#f0fdf4}.stat.red{background:#fef2f2}.notice{padding:13px 15px;border-radius:12px;margin-bottom:15px;font-weight:700}.notice.ok{background:#dcfce7;color:#166534}.notice.bad{background:#fee2e2;color:#991b1b}.group{border:2px solid #e2e8f0;border-radius:18px;background:#fff;margin-bottom:18px;overflow:hidden}.group.pending{border-color:#f59e0b}.group.selected{border-color:#22c55e}.group-head{display:flex;justify-content:space-between;gap:12px;align-items:center;padding:14px 16px;background:#f8fafc;flex-wrap:wrap}.group-head h2{margin:0;font-size:19px}.badge{display:inline-block;padding:5px 9px;border-radius:999px;font-size:12px;font-weight:900}.badge.yellow{background:#ffedd5;color:#9a3412}.badge.green{background:#dcfce7;color:#166534}.badge.red{background:#fee2e2;color:#991b1b}.photos{display:flex;flex-wrap:wrap;align-items:flex-start;gap:14px;padding:16px}.photo{flex:0 1 245px;max-width:285px;min-width:220px}.photo{border:1px solid var(--line);border-radius:14px;padding:10px;background:#fff;position:relative}.photo.selected-source{outline:3px solid #22c55e}.preview{width:100%;height:245px;object-fit:contain;background:linear-gradient(45deg,#eef2f7 25%,transparent 25%),linear-gradient(-45deg,#eef2f7 25%,transparent 25%),linear-gradient(45deg,transparent 75%,#eef2f7 75%),linear-gradient(-45deg,transparent 75%,#eef2f7 75%);background-size:20px 20px;background-position:0 0,0 10px,10px -10px,-10px 0;border-radius:10px}.meta{font-size:12px;line-height:1.55;color:#475569;margin-top:9px;word-break:break-word}.filename{font-weight:900;color:#0f172a}.radio{display:flex;align-items:center;gap:7px;margin-top:9px;font-weight:800}.warning{font-size:12px;color:#b45309;background:#fff7ed;padding:7px;border-radius:8px;margin-top:7px}.group-action{padding:0 16px 16px;display:flex;gap:10px;align-items:center;flex-wrap:wrap}.report-box{background:#fff7ed;border:1px solid #fed7aa;border-radius:12px;padding:11px;font-size:13px;line-height:1.55;flex:1;min-width:260px}.pagination{display:flex;gap:7px;flex-wrap:wrap;justify-content:center;margin:20px 0}.pagination a,.pagination span{padding:8px 11px;border-radius:9px;background:#fff;border:1px solid var(--line);text-decoration:none;color:var(--ink)}.pagination .active{background:var(--blue);color:#fff}.empty{text-align:center;padding:45px 15px;color:var(--muted)}.howto{display:grid;grid-template-columns:repeat(3,minmax(0,1fr));gap:10px}.step{background:#eff6ff;border:1px solid #bfdbfe;border-radius:12px;padding:12px}.exts{display:flex;gap:6px;flex-wrap:wrap;margin-top:8px}.unmatched{max-height:180px;overflow:auto;background:#fff7ed;border:1px solid #fed7aa;border-radius:10px;padding:10px;font-size:12px;line-height:1.6}code{background:#f1f5f9;border-radius:5px;padding:2px 5px}@media(max-width:850px){.howto{grid-template-columns:1fr}}@media(max-width:850px){.stats{grid-template-columns:repeat(2,minmax(0,1fr))}.preview{height:220px}}@media(max-width:520px){.stats{grid-template-columns:1fr}.toolbar input,.toolbar select{width:100%;min-width:0}.btn{justify-content:center}.photo{flex-basis:100%;max-width:none;min-width:0}}
 </style>
 </head>
 <body><div class="wrap">
@@ -452,6 +488,20 @@ $scanVersion = rawurlencode((string)($manifest['scanned_at'] ?? ''));
 </div>
 
 <?php if ($message !== ''): ?><div class="notice <?= $messageType === 'bad' ? 'bad' : 'ok' ?>"><?= pv_h($message) ?></div><?php endif; ?>
+
+<div class="card">
+<div class="howto">
+<div class="step"><b>1. Scan SFTP</b><br><span class="muted">Klik butang Scan SFTP untuk membaca semua fail JPG, JPEG dan PNG. Fail dengan No. Matrik sama akan dikumpulkan walaupun extension berbeza.</span></div>
+<div class="step"><b>2. Buka 2+ versi</b><br><span class="muted">Klik kad oren. Semua fail bagi No. Matrik sama akan muncul sebelah-menyebelah.</span></div>
+<div class="step"><b>3. Pilih gambar</b><br><span class="muted">Tanda satu gambar, kemudian klik Jadikan NOMATRIK.jpg. Fail lain masuk laporan calon padam.</span></div>
+</div>
+<div class="exts">
+<?php foreach ($extensionCounts as $ext => $count): ?><span class="badge yellow"><?= pv_h(strtoupper($ext)) ?>: <?= (int)$count ?></span><?php endforeach; ?>
+<span class="badge green">Dipadankan: <?= (int)$matchedFileCount ?></span>
+<?php if ($unmatchedFiles): ?><span class="badge red">Nama tidak dipadankan: <?= count($unmatchedFiles) ?></span><?php endif; ?>
+</div>
+<?php if ($unmatchedFiles): ?><details style="margin-top:10px"><summary><b>Lihat nama fail yang tidak mempunyai No. Matrik yang dapat dikenal pasti</b></summary><div class="unmatched"><?php foreach (array_slice($unmatchedFiles,0,200) as $badFile): ?><div><?= pv_h($badFile) ?></div><?php endforeach; ?><?php if (count($unmatchedFiles)>200): ?><div>... dan <?= count($unmatchedFiles)-200 ?> fail lagi</div><?php endif; ?></div></details><?php endif; ?>
+</div>
 
 <div class="stats">
 <a class="stat blue" href="?view=all"><b><?= count($groups) ?></b>Pelajar ada gambar SFTP</a>
@@ -492,7 +542,7 @@ $scanVersion = rawurlencode((string)($manifest['scanned_at'] ?? ''));
 <form class="group <?= pv_h($groupClass) ?>" method="post" onsubmit="return confirm('Gunakan gambar pilihan sebagai <?= pv_h($matrik) ?>.jpg? Fail lain TIDAK dipadam secara automatik.');">
 <input type="hidden" name="csrf" value="<?= pv_h($csrf) ?>"><input type="hidden" name="action" value="select"><input type="hidden" name="matrik" value="<?= pv_h($matrik) ?>"><input type="hidden" name="nama" value="<?= pv_h($name) ?>">
 <div class="group-head">
-<div><h2><?= pv_h($matrik) ?><?= $name !== '' ? ' — ' . pv_h($name) : '' ?></h2><span class="muted"><?= count($files) ?> fail gambar ditemui</span></div>
+<div><h2><?= pv_h($matrik) ?><?= $name !== '' ? ' — ' . pv_h($name) : '' ?></h2><span class="muted"><?= count($files) ?> fail gambar ditemui · dipaparkan sebelah-menyebelah</span></div>
 <div>
 <?php if ($cleanupStatus === 'pending'): ?><span class="badge red">MENUNGGU PADAM</span>
 <?php elseif ($review): ?><span class="badge green">GAMBAR UTAMA DIPILIH</span>
