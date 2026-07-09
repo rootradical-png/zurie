@@ -125,7 +125,7 @@
     var devices=Array.isArray(payload.devices)?payload.devices:[];
     root._livePingDevices={};
     devices.forEach(function(d){root._livePingDevices[d.id]=d;});
-    if(!devices.length){grid.innerHTML='<div class="live-ping-empty">Tiada device dipilih. Klik <b>Pilih Device</b>.</div>';grid.setAttribute('data-count','0');return;}
+    if(!devices.length){var emptyMsg=root.getAttribute('data-empty-message')||'Tiada device dipilih. Klik <b>Pilih Device</b>.';grid.innerHTML='<div class="live-ping-empty">'+emptyMsg+'</div>';grid.setAttribute('data-count','0');return;}
     grid.setAttribute('data-count',String(devices.length));
     grid.innerHTML=devices.map(function(device){return compact?compactCardHtml(device):fullCardHtml(root,device);}).join('');
     devices.forEach(function(device){

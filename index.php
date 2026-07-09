@@ -540,7 +540,7 @@ $displayRole = $isGuest ? 'Guest | Read-only Monitoring' : 'ICT | KMP';
                                 <small>Peranti bermasalah dan kejadian terkini dipaparkan di sini</small>
                             </div>
                         </div>
-                        <a class="alert-view-all" href="/zurie/pages/live_ping.php">Lihat Monitoring <span>→</span></a>
+                        <a class="alert-view-all" href="/zurie/pages/live_ping.php?status=down">Lihat Monitoring <span>→</span></a>
                     </div>
                     <div id="nocAlerts" class="premium-alert-list premium-alert-list-top">
                         <div class="premium-alert-row loading"><span>…</span><div><b>Loading status...</b><small>Menunggu API NOC</small></div></div>

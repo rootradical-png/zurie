@@ -10,6 +10,8 @@ $devicesFile = __DIR__ . '/../data/noc_devices.json';
 $favoritesFile = __DIR__ . '/../data/live_ping_favorites.json';
 $historyFile = __DIR__ . '/../data/live_ping_history.json';
 $recentFile = __DIR__ . '/../data/live_ping_recent.json';
+$requestedStatus = strtolower(trim((string)($_GET['status'] ?? '')));
+$downOnlyMode = in_array($requestedStatus, ['down', 'offline'], true);
 
 function lp_json_file($file, $default) {
     if (!is_file($file)) return $default;
@@ -285,19 +287,22 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
 }
 
 $favorites = lp_json_file($favoritesFile, ['device_ids' => []]);
-$maxDevices = isset($_GET['limit']) ? max(1, min(6, (int)$_GET['limit'])) : 6;
+$maxDevices = isset($_GET['limit']) ? max(1, min($downOnlyMode ? 80 : 6, (int)$_GET['limit'])) : ($downOnlyMode ? 80 : 6);
 $favoriteIds = array_slice(array_values(array_unique(array_map('strval', $favorites['device_ids'] ?? []))), 0, $maxDevices);
 $recentPayload = lp_json_file($recentFile, ['devices' => []]);
 $recentMap = is_array($recentPayload['devices'] ?? null) ? $recentPayload['devices'] : [];
 
 $selected = [];
 $favoriteOrder = [];
-foreach ($favoriteIds as $index => $id) {
+if ($downOnlyMode) {
+    $selected = array_slice(array_values($deviceMap), 0, $maxDevices);
+}
+foreach (!$downOnlyMode ? $favoriteIds : [] as $index => $id) {
     $favoriteOrder[$id] = $index;
     if (isset($deviceMap[$id])) $selected[] = $deviceMap[$id];
 }
 
-if (!$selected) {
+if (!$downOnlyMode && !$selected) {
     $defaultNames = ['DistAdmin01', 'i-SIMS', 'MIS', 'Website KMP'];
     foreach ($defaultNames as $name) {
         foreach ($deviceMap as $device) {
@@ -378,6 +383,12 @@ foreach ($selected as $device) {
     ];
 }
 
+if ($downOnlyMode) {
+    $rows = array_values(array_filter($rows, function($row) {
+        return strtoupper((string)($row['status'] ?? '')) === 'DOWN';
+    }));
+}
+
 lp_write_json($historyFile, $history);
 
 echo json_encode([
@@ -389,5 +400,6 @@ echo json_encode([
     'paused_count' => count($selected) - count($activeSelected),
     'source' => gethostname() ?: ($_SERVER['SERVER_NAME'] ?? 'NOC Server'),
     'diagnostic' => $pingDiagnostic,
+    'filter' => $downOnlyMode ? 'down' : 'favorites',
     'devices' => $rows,
 ], JSON_UNESCAPED_SLASHES);

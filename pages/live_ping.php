@@ -4,6 +4,7 @@ session_start();
 $devicesFile = __DIR__ . '/../data/noc_devices.json';
 $favoritesFile = __DIR__ . '/../data/live_ping_favorites.json';
 $recentFile = __DIR__ . '/../data/live_ping_recent.json';
+$downMode = strtolower(trim((string)($_GET['status'] ?? ''))) === 'down';
 
 function lp_e($value) { return htmlspecialchars((string)$value, ENT_QUOTES, 'UTF-8'); }
 function lp_id($device) {
@@ -79,7 +80,7 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
 <head>
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width,initial-scale=1,viewport-fit=cover">
-<title>Live Ping Favorites</title>
+<title><?= $downMode ? 'Device DOWN - Live Monitoring' : 'Live Ping Favorites' ?></title>
 <link rel="icon" href="/zurie/image/zuriex.jpg">
 <link rel="stylesheet" href="../assets/css/style.css">
 <link rel="stylesheet" href="../assets/css/noc-dashboard.css">
@@ -91,23 +92,25 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
         <div class="live-ping-title-block">
             <a href="../index.php">← Dashboard</a>
             <div class="live-ping-title-row">
-                <h1>Live Ping Favorites</h1>
+                <h1><?= $downMode ? 'Device DOWN / Bermasalah' : 'Live Ping Favorites' ?></h1>
                 <span class="live-ping-live-badge"><i></i> LIVE</span>
             </div>
-            <p>Latency masa nyata dari server NOC • purata 4 paket • refresh setiap 10 saat</p>
+            <p><?= $downMode ? 'Senarai device yang sedang DOWN sahaja • refresh setiap 10 saat' : 'Latency masa nyata dari server NOC • purata 4 paket • refresh setiap 10 saat' ?></p>
         </div>
         <div class="live-ping-top-actions">
             <button type="button" class="live-ping-top-btn" data-view-toggle>⛶ Paparan Penuh</button>
-            <button type="button" class="live-ping-top-btn is-primary" data-config-open>⚙ Pilih Device</button>
+            <a class="live-ping-top-btn <?= $downMode ? '' : 'is-primary' ?>" href="live_ping.php?status=down">Device Down</a>
+            <a class="live-ping-top-btn <?= $downMode ? 'is-primary' : '' ?>" href="live_ping.php">Semua/Favorites</a>
+            <?php if (!$downMode): ?><button type="button" class="live-ping-top-btn is-primary" data-config-open>⚙ Pilih Device</button><?php endif; ?>
             <a href="../pages/device_manager.php">Device Manager</a>
         </div>
     </div>
 
-    <section class="noc-panel live-ping-panel" data-live-ping data-api="../api/live_ping.php" data-interval="10000" data-server-detail-base="server_detail.php" data-csrf="<?= lp_e($_SESSION['lp_csrf']) ?>">
+    <section class="noc-panel live-ping-panel" data-live-ping data-api="../api/live_ping.php<?= $downMode ? '?status=down&limit=80' : '' ?>" data-empty-message="<?= $downMode ? 'Tiada device DOWN buat masa ini. Semua monitoring kelihatan normal.' : 'Tiada device dipilih. Klik <b>Pilih Device</b>.' ?>" data-interval="10000" data-server-detail-base="server_detail.php" data-csrf="<?= lp_e($_SESSION['lp_csrf']) ?>">
         <div class="panel-heading live-ping-heading">
             <div class="live-ping-heading-left">
-                <h3>LIVE LATENCY <span>(10 SAAT)</span></h3>
-                <small>Graf sentiasa bergerak • klik kad Server untuk buka detail</small>
+                <h3><?= $downMode ? 'DEVICE DOWN' : 'LIVE LATENCY' ?> <span>(10 SAAT)</span></h3>
+                <small><?= $downMode ? 'Paparan ini hanya tunjuk device yang gagal ping / timeout' : 'Graf sentiasa bergerak • klik kad Server untuk buka detail' ?></small>
             </div>
             <div class="live-ping-run-state">
                 <div class="live-ping-running"><span></span><b data-live-state>Menunggu semakan</b></div>
