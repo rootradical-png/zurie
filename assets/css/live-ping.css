@@ -62,3 +62,24 @@
 
 /* Down-only monitoring view - compact NOC alert list */
 .live-ping-page.is-down-only-mode{overflow:auto}.live-ping-page.is-down-only-mode .live-ping-page-shell{max-width:1180px}.is-down-only-panel{padding-bottom:14px}.is-down-only-panel .live-ping-grid{display:flex!important;flex-direction:column!important;grid-template-columns:none!important;gap:9px;overflow:visible;min-height:0}.is-down-only-panel .live-ping-progress-track{height:3px}.live-ping-down-summary{display:flex;align-items:center;gap:9px;margin:8px 0 10px;padding:9px 11px;border:1px solid rgba(255,82,96,.24);background:linear-gradient(90deg,rgba(255,82,96,.11),rgba(255,82,96,.035));border-radius:12px;color:#ffd6da}.live-ping-down-summary .down-dot{width:10px;height:10px;border-radius:50%;background:#ff5260;box-shadow:0 0 16px rgba(255,82,96,.85);animation:lpPulse 1.3s infinite}.live-ping-down-summary b{font-size:11px}.live-ping-down-summary small{margin-left:auto;color:#9dafc2;font-size:10px}.live-ping-down-row{display:grid;grid-template-columns:42px minmax(220px,1.4fr) 120px 110px 120px auto;align-items:center;gap:12px;padding:12px 14px;border:1px solid rgba(255,82,96,.22);border-left:4px solid #ff5260;border-radius:14px;background:linear-gradient(90deg,rgba(255,82,96,.13),rgba(13,28,45,.92) 44%,rgba(10,24,39,.96));box-shadow:0 8px 22px rgba(0,0,0,.18),inset 0 1px 0 rgba(255,255,255,.035);transition:.18s ease}.live-ping-down-row:hover{transform:translateY(-1px);border-color:rgba(255,82,96,.42);box-shadow:0 12px 28px rgba(0,0,0,.24),0 0 0 1px rgba(255,82,96,.08)}.live-ping-down-no{display:grid;place-items:center;width:28px;height:28px;border-radius:10px;background:rgba(255,82,96,.13);color:#ff9aa3;font-weight:900;font-size:12px}.live-ping-down-main b{display:block;color:#f8fbff;font-size:13px}.live-ping-down-main small,.live-ping-down-meta small,.live-ping-down-time small{display:block;margin-top:3px;color:#8195aa;font-size:9px}.live-ping-down-status span{display:inline-flex;align-items:center;gap:6px;padding:5px 8px;border-radius:999px;background:rgba(255,82,96,.16);border:1px solid rgba(255,82,96,.3);color:#ff8f98;font-size:10px;font-weight:900;letter-spacing:.08em}.live-ping-down-status span:before{content:'';width:6px;height:6px;border-radius:50%;background:#ff5260;box-shadow:0 0 10px rgba(255,82,96,.8)}.live-ping-down-status small{display:block;margin-top:4px;color:#ffb4bb;font-size:10px;font-weight:800}.live-ping-down-meta b,.live-ping-down-time b{color:#dcecff;font-size:11px}.live-ping-down-action{justify-self:end;text-decoration:none;border:1px solid rgba(76,177,255,.28);background:rgba(32,125,217,.13);color:#8ed1ff;border-radius:10px;padding:7px 10px;font-size:10px;font-weight:900;white-space:nowrap}.live-ping-down-action:hover{background:rgba(32,125,217,.24);border-color:rgba(76,177,255,.5)}.live-ping-down-action.is-muted{color:#6e8298;border-color:rgba(112,148,188,.12);background:rgba(255,255,255,.025)}.live-ping-empty-good{border-color:rgba(67,219,120,.28);background:rgba(67,219,120,.08);color:#aef3c4}.live-ping-empty-good b{color:#d8ffe6}@media(max-width:980px){.live-ping-down-row{grid-template-columns:34px minmax(0,1fr) 110px;gap:9px}.live-ping-down-meta,.live-ping-down-time{display:none}.live-ping-down-action{grid-column:2/4;justify-self:start}}@media(max-width:620px){.live-ping-down-summary{align-items:flex-start}.live-ping-down-summary small{display:none}.live-ping-down-row{grid-template-columns:30px 1fr;align-items:start}.live-ping-down-status,.live-ping-down-action{grid-column:2}.live-ping-down-action{justify-self:start}.live-ping-down-main b{font-size:12px}}
+
+/* Fix: allow scrolling in Device DOWN view */
+.live-ping-page.is-down-only-mode{
+  height:auto !important;
+  min-height:100vh;
+  overflow-y:auto !important;
+  overflow-x:hidden;
+}
+.live-ping-page.is-down-only-mode .live-ping-page-shell{
+  height:auto !important;
+  min-height:calc(100vh - 24px);
+  overflow:visible !important;
+  display:block;
+}
+.live-ping-page.is-down-only-mode .live-ping-panel,
+.live-ping-page.is-down-only-mode .is-down-only-panel,
+.live-ping-page.is-down-only-mode .live-ping-grid{
+  height:auto !important;
+  overflow:visible !important;
+  flex:initial !important;
+}
