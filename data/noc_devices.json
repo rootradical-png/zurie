@@ -1,0 +1,721 @@
+[
+    {
+        "id": "dev_d58b4e61530b8102",
+        "type": "Switch",
+        "name": "DistAdmin01",
+        "model": "H3C S5500-28F",
+        "serial": "210235A24UH104000187",
+        "ip": "10.14.60.3",
+        "url": "http://10.14.60.3"
+    },
+    {
+        "id": "dev_b2cb833672ea043c",
+        "type": "Switch",
+        "name": "DistLibrary02",
+        "model": "H3C S5500-28F",
+        "serial": "210235A24UH104000276",
+        "ip": "10.14.60.4",
+        "url": "http://10.14.60.4"
+    },
+    {
+        "id": "dev_4786548a3c9a625a",
+        "type": "Switch",
+        "name": "DistBlokPensyarah03",
+        "model": "H3C S5500-28F",
+        "serial": "210235A24UH104000255",
+        "ip": "10.14.60.2",
+        "url": "http://10.14.60.2"
+    },
+    {
+        "id": "dev_c9712098d533dec2",
+        "type": "Switch",
+        "name": "KMP_Wireless",
+        "model": "H3C WX5004",
+        "serial": "210235A35JB09C000037",
+        "ip": "10.14.60.5",
+        "url": "http://10.14.60.5"
+    },
+    {
+        "id": "dev_4aa26f217cec6cf6",
+        "type": "Switch",
+        "name": "vComLab6",
+        "model": "Aruba Instant On 1930 48G",
+        "serial": "CN22KPH0Y5",
+        "ip": "10.14.60.9",
+        "url": "http://10.14.60.9"
+    },
+    {
+        "id": "dev_5c11bee7acba8084",
+        "type": "Switch",
+        "name": "Switch MK 7",
+        "model": "Aruba Instant On 1930 48G",
+        "serial": "CN58LNX0TF",
+        "ip": "10.14.62.8",
+        "url": "http://10.14.62.8"
+    },
+    {
+        "id": "dev_93dc0738c7c3631c",
+        "type": "Switch",
+        "name": "ComLab08",
+        "model": "3COM 4210G 48-Port",
+        "serial": "210235A0F1H105000012",
+        "ip": "10.14.60.11",
+        "url": "http://10.14.60.11"
+    },
+    {
+        "id": "dev_b7c02f1aaa9d1091",
+        "type": "Switch",
+        "name": "ComLab9",
+        "model": "3COM 4210G 48-Port",
+        "serial": "210235A0F1H104000288",
+        "ip": "10.14.60.12",
+        "url": "http://10.14.60.12"
+    },
+    {
+        "id": "dev_9df9e3640f6b53d1",
+        "type": "Switch",
+        "name": "ComLab10",
+        "model": "3COM 4210G 48-Port",
+        "serial": "210235A0F1H105000525",
+        "ip": "10.14.60.13",
+        "url": "http://10.14.60.13"
+    },
+    {
+        "id": "dev_dd110618af68deb6",
+        "type": "Switch",
+        "name": "Lect021stF",
+        "model": "3COM 4210G 48-Port",
+        "serial": "210235A0F1H105000629",
+        "ip": "10.14.60.28",
+        "url": "http://10.14.60.28"
+    },
+    {
+        "id": "dev_04d91c8005df1a88",
+        "type": "Switch",
+        "name": "Lect011stF",
+        "model": "3COM 4210G 48-Port",
+        "serial": "210235A0F1H105000318",
+        "ip": "10.14.60.27",
+        "url": "http://10.14.60.27"
+    },
+    {
+        "id": "dev_9c5bd0a350155647",
+        "type": "Switch",
+        "name": "Pensyarah_GF",
+        "model": "3COM 4210G 48-Port",
+        "serial": "210235A0F1H105000312",
+        "ip": "10.14.60.30",
+        "url": "http://10.14.60.30"
+    },
+    {
+        "id": "dev_ee2996026b57891a",
+        "type": "Switch",
+        "name": "Admin02Gf",
+        "model": "3COM 4210G 48-Port",
+        "serial": "210235A0F1H105000836",
+        "ip": "10.14.60.15",
+        "url": "http://10.14.60.15"
+    },
+    {
+        "id": "dev_3eb20fad1aec18c1",
+        "type": "Switch",
+        "name": "Server_Room",
+        "model": "3COM 4210G 48-Port",
+        "serial": "210235A0F1H105000260",
+        "ip": "10.14.60.6",
+        "url": "http://10.14.60.6"
+    },
+    {
+        "id": "dev_ff66db2b433a6068",
+        "type": "Switch",
+        "name": "IbnuKhaldun",
+        "model": "HPE OfficeConnect 1820 24G",
+        "serial": "CN01GMW1SR",
+        "ip": "10.14.60.33",
+        "url": "http://10.14.60.33"
+    },
+    {
+        "id": "dev_5265aea2c337d743",
+        "type": "Switch",
+        "name": "Lib02_GF",
+        "model": "3Com Switch 4500 50-Port",
+        "serial": "YEDFA7MF8E700",
+        "ip": "10.14.60.17",
+        "url": "http://10.14.60.17"
+    },
+    {
+        "id": "dev_28cfec60d614227f",
+        "type": "Switch",
+        "name": "Lib_Level_1",
+        "model": "3Com Switch 4500 26-Port",
+        "serial": "YECF9OLCC5F40",
+        "ip": "10.14.60.19",
+        "url": "http://10.14.60.19"
+    },
+    {
+        "id": "dev_5360b7d2600de303",
+        "type": "Switch",
+        "name": "LibraryGf2",
+        "model": "Aruba Instant On 1930 24p",
+        "serial": "CN36LB34SS",
+        "ip": "10.14.60.20",
+        "url": "http://10.14.60.20"
+    },
+    {
+        "id": "dev_eebe9c37ce0ea486",
+        "type": "Switch",
+        "name": "DewanKuliah",
+        "model": "3COM 4210G 24-Port",
+        "serial": "210235A0F0H104000006",
+        "ip": "10.14.60.21",
+        "url": "http://10.14.60.21"
+    },
+    {
+        "id": "dev_16a9fea353a860c0",
+        "type": "Switch",
+        "name": "MakmalSainsGf",
+        "model": "3COM 4210G 48-Port",
+        "serial": "210235A0F1H105001007",
+        "ip": "10.14.60.22",
+        "url": "http://10.14.60.22"
+    },
+    {
+        "id": "dev_6653b8e5cd197dce",
+        "type": "Switch",
+        "name": "Tutoran_A",
+        "model": "3COM 4210G 24-Port",
+        "serial": "210235A0F0H105000819",
+        "ip": "10.14.60.23",
+        "url": "http://10.14.60.23"
+    },
+    {
+        "id": "dev_5ae9580f07cc7e78",
+        "type": "Switch",
+        "name": "Tutoran_B",
+        "model": "3COM 4210G 24-Port",
+        "serial": "210235A0F0H105000819",
+        "ip": "10.14.60.24",
+        "url": "http://10.14.60.24"
+    },
+    {
+        "id": "dev_1437d21c40c83e80",
+        "type": "Switch",
+        "name": "Asrama C1",
+        "model": "Aruba Instant On 1930 24p",
+        "serial": "CN36LB34LY",
+        "ip": "10.14.60.26",
+        "url": "http://10.14.60.26"
+    },
+    {
+        "id": "dev_f4850fed2ec62216",
+        "type": "Switch",
+        "name": "Asrama A3",
+        "model": "Aruba Instant On 1930 24p",
+        "serial": "CN36LB34SN",
+        "ip": "10.14.60.25",
+        "url": "http://10.14.60.25"
+    },
+    {
+        "id": "dev_2071352aef89b001",
+        "type": "Switch",
+        "name": "BLOK B1",
+        "model": "3COM 4210G 48-Port",
+        "serial": "210235A0F1H105000256",
+        "ip": "10.14.60.7",
+        "url": "http://10.14.60.7"
+    },
+    {
+        "id": "dev_4de800654f6c86d0",
+        "type": "Server",
+        "name": "Server ILMU",
+        "model": "",
+        "serial": "",
+        "ip": "10.14.51.114",
+        "url": "http://10.14.51.114",
+        "monitoring_status": "active",
+        "monitoring_note": ""
+    },
+    {
+        "id": "dev_fd3cc73d20a07e6f",
+        "type": "Server",
+        "name": "i-SIMS",
+        "model": "Window server 2007",
+        "serial": "",
+        "ip": "10.14.48.80",
+        "url": "http://10.14.48.80",
+        "monitoring_status": "active",
+        "monitoring_note": ""
+    },
+    {
+        "id": "dev_f703a85e76aee8e1",
+        "type": "Server",
+        "name": "MIS",
+        "model": "Free BSD",
+        "serial": "",
+        "ip": "10.14.48.75",
+        "url": "http://10.14.48.75",
+        "monitoring_status": "active",
+        "monitoring_note": ""
+    },
+    {
+        "id": "dev_a82d2aba82c907b0",
+        "type": "Server",
+        "name": "FTP",
+        "model": "Linux",
+        "serial": "",
+        "ip": "10.14.48.74",
+        "url": "ftp://10.14.48.74",
+        "monitoring_status": "paused",
+        "monitoring_note": ""
+    },
+    {
+        "id": "dev_b342e0e6000a30c4",
+        "type": "Server",
+        "name": "MIS Dev",
+        "model": "",
+        "serial": "",
+        "ip": "10.14.48.73",
+        "url": "http://10.14.48.73",
+        "monitoring_status": "paused",
+        "monitoring_note": ""
+    },
+    {
+        "id": "dev_195169d7318d3760",
+        "type": "Server",
+        "name": "DHCP/DNS",
+        "model": "WIN SERVER",
+        "serial": "",
+        "ip": "10.14.48.71",
+        "url": "http://10.14.48.71",
+        "monitoring_status": "paused",
+        "monitoring_note": ""
+    },
+    {
+        "id": "dev_63ca2c09a40abdd6",
+        "type": "Server",
+        "name": "Portal (Moodle)",
+        "model": "Ubuntu",
+        "serial": "",
+        "ip": "10.14.48.102",
+        "url": "http://10.14.48.102",
+        "monitoring_status": "active",
+        "monitoring_note": ""
+    },
+    {
+        "id": "dev_04b627acc6e597c8",
+        "type": "Server",
+        "name": "Website KMP",
+        "model": "WiN SERVER",
+        "serial": "",
+        "ip": "10.14.48.100",
+        "url": "http://10.14.48.100",
+        "monitoring_status": "active",
+        "monitoring_note": ""
+    },
+    {
+        "id": "dev_b35a1b6511ccb3b6",
+        "type": "Server",
+        "name": "Proxy",
+        "model": "WiN SERVER",
+        "serial": "",
+        "ip": "10.14.48.101",
+        "url": "http://10.14.48.101",
+        "monitoring_status": "active",
+        "monitoring_note": ""
+    },
+    {
+        "id": "dev_8a2a598a6d7c6a90",
+        "type": "Service",
+        "name": "Unifi Controller (Ubiquiti)",
+        "model": "Debian",
+        "serial": "",
+        "ip": "10.14.49.10",
+        "url": "https://10.14.49.10:8443/manage/default/devices",
+        "monitoring_status": "active",
+        "monitoring_note": ""
+    },
+    {
+        "id": "dev_2938e6ebc314dedb",
+        "type": "Service",
+        "name": "H3C SecBlade FW",
+        "model": "Firewall",
+        "serial": "",
+        "ip": "10.14.48.2",
+        "url": "http://10.14.48.2",
+        "monitoring_status": "active",
+        "monitoring_note": ""
+    },
+    {
+        "id": "dev_ae384b24c563fbd7",
+        "type": "Service",
+        "name": "H3C wireless controller",
+        "model": "H3C WX5004",
+        "serial": "",
+        "ip": "10.14.60.5",
+        "url": "http://10.14.60.5",
+        "monitoring_status": "paused",
+        "monitoring_note": ""
+    },
+    {
+        "id": "dev_92b800edc2873a0a",
+        "type": "Service",
+        "name": "Unifi Controller (Ubiquiti) - AP lama",
+        "model": "AP lama",
+        "serial": "",
+        "ip": "10.14.49.200",
+        "url": "https://10.14.49.200:8443",
+        "monitoring_status": "paused",
+        "monitoring_note": ""
+    },
+    {
+        "id": "dev_fe74df96ea9a5cf6",
+        "type": "AP",
+        "name": "AP DK",
+        "model": "TP Link AX5400 Wi-Fi 6 Router",
+        "serial": "",
+        "ip": "10.14.53.193",
+        "url": "http://10.14.53.193"
+    },
+    {
+        "id": "dev_a0140f8e23374873",
+        "type": "AP",
+        "name": "Bridge NanoBeam DSK",
+        "model": "NanoBeam 5AC DSK",
+        "serial": "",
+        "ip": "10.14.62.14",
+        "url": "http://10.14.62.21"
+    },
+    {
+        "id": "dev_e5a6cf443bd9967d",
+        "type": "AP",
+        "name": "Bridge NanoBeam Garage",
+        "model": "NanoBeam 5AC Garage",
+        "serial": "",
+        "ip": "10.14.62.26",
+        "url": "http://10.14.62.20"
+    },
+    {
+        "id": "dev_1c171096340b7dc2",
+        "type": "AP",
+        "name": "AP IbnuKhaldun",
+        "model": "Ubiquitu AC Pro",
+        "serial": "",
+        "ip": "10.14.62.4",
+        "url": "http://10.14.62.4"
+    },
+    {
+        "id": "dev_b4b3cb5ee1fe12ad",
+        "type": "AP",
+        "name": "ICT",
+        "model": "Ubiquiti UAP",
+        "serial": "",
+        "ip": "10.14.62.1",
+        "url": "http://10.14.62.41"
+    },
+    {
+        "id": "dev_f0132554801526cb",
+        "type": "AP",
+        "name": "AP IbnuSina",
+        "model": "Ubiquitu AC Pro",
+        "serial": "",
+        "ip": "10.14.62.2",
+        "url": "http://10.14.62.2"
+    },
+    {
+        "id": "dev_cbb8e51f16565854",
+        "type": "AP",
+        "name": "DSK",
+        "model": "Ubiquitu AC Pro",
+        "serial": "",
+        "ip": "10.14.62.5",
+        "url": "http://10.14.62.5"
+    },
+    {
+        "id": "dev_d26e8c9b59ed7f64",
+        "type": "AP",
+        "name": "TutoranA-Atas",
+        "model": "Ubiquitu AC Pro",
+        "serial": "",
+        "ip": "10.14.62.3",
+        "url": "http://10.14.62.3"
+    },
+    {
+        "id": "dev_11c73c4009d1ea1a",
+        "type": "AP",
+        "name": "U7 Hostel A1-03",
+        "model": "Ubiquiti U7",
+        "serial": "",
+        "ip": "10.14.58.95",
+        "url": "http://10.14.59.216"
+    },
+    {
+        "id": "dev_8a60c2f73e523ea8",
+        "type": "AP",
+        "name": "U7 Hostel A1-04",
+        "model": "Ubiquiti U7",
+        "serial": "",
+        "ip": "10.14.58.89",
+        "url": "http://10.14.59.200"
+    },
+    {
+        "id": "dev_28f692bc3a160324",
+        "type": "AP",
+        "name": "U7 Hostel A2-03",
+        "model": "Ubiquiti U7",
+        "serial": "",
+        "ip": "10.14.58.3",
+        "url": "http://10.14.59.214"
+    },
+    {
+        "id": "dev_55028108eb0fca18",
+        "type": "AP",
+        "name": "U7 Hostel A2-04",
+        "model": "Ubiquiti U7",
+        "serial": "",
+        "ip": "10.14.59.220",
+        "url": "http://10.14.59.220"
+    },
+    {
+        "id": "dev_81a0a1b1f34fdb34",
+        "type": "AP",
+        "name": "U7 Hostel A3-03",
+        "model": "Ubiquiti U7",
+        "serial": "",
+        "ip": "10.14.58.255",
+        "url": "http://10.14.58.94"
+    },
+    {
+        "id": "dev_e749394eb3ab4ef0",
+        "type": "AP",
+        "name": "U7 Hostel A3-04",
+        "model": "Ubiquiti U7",
+        "serial": "",
+        "ip": "10.14.58.90",
+        "url": "http://10.14.58.90"
+    },
+    {
+        "id": "dev_a1b94818fad24ba5",
+        "type": "AP",
+        "name": "U7 Library L1-01",
+        "model": "Ubiquiti U7",
+        "serial": "",
+        "ip": "10.14.58.5",
+        "url": "http://10.14.59.233"
+    },
+    {
+        "id": "dev_09d1e8c4fce6e5d2",
+        "type": "AP",
+        "name": "U7 Hostel B1-04",
+        "model": "Ubiquiti U7",
+        "serial": "",
+        "ip": "10.14.58.22",
+        "url": "http://10.14.58.22"
+    },
+    {
+        "id": "dev_7d118715175bda8d",
+        "type": "AP",
+        "name": "U7 Hostel B2-03",
+        "model": "Ubiquiti U7",
+        "serial": "",
+        "ip": "10.14.54.10",
+        "url": "http://10.14.58.165"
+    },
+    {
+        "id": "dev_4ce69c0f8f2a7c18",
+        "type": "AP",
+        "name": "U7 Hostel B2-04",
+        "model": "Ubiquiti U7",
+        "serial": "",
+        "ip": "10.14.54.8",
+        "url": "http://10.14.58.166"
+    },
+    {
+        "id": "dev_89de03be43ab9a49",
+        "type": "AP",
+        "name": "U7 Hostel B3-03",
+        "model": "Ubiquiti U7",
+        "serial": "",
+        "ip": "10.14.54.5",
+        "url": "http://10.14.54.233"
+    },
+    {
+        "id": "dev_c166f039baffc59e",
+        "type": "AP",
+        "name": "U7 Hostel B3-04",
+        "model": "Ubiquiti U7",
+        "serial": "",
+        "ip": "10.14.54.7",
+        "url": "http://10.14.54.232"
+    },
+    {
+        "id": "dev_25ab14bcc98be45f",
+        "type": "AP",
+        "name": "U7 Hostel C1-03",
+        "model": "Ubiquiti U7",
+        "serial": "",
+        "ip": "10.14.56.9",
+        "url": "http://10.14.54.138"
+    },
+    {
+        "id": "dev_e9539468fa623f80",
+        "type": "AP",
+        "name": "U7 Hostel C1-04",
+        "model": "Ubiquiti U7",
+        "serial": "",
+        "ip": "10.14.56.4",
+        "url": "http://10.14.54.140"
+    },
+    {
+        "id": "dev_6371841c6a200e77",
+        "type": "AP",
+        "name": "U7 Hostel C2-03",
+        "model": "Ubiquiti U7",
+        "serial": "",
+        "ip": "10.14.54.3",
+        "url": "http://10.14.54.3"
+    },
+    {
+        "id": "dev_7bfa6b1a817b3d8d",
+        "type": "AP",
+        "name": "U7 Hostel C2-04",
+        "model": "Ubiquiti U7",
+        "serial": "",
+        "ip": "10.14.54.1",
+        "url": "http://10.14.54.1"
+    },
+    {
+        "id": "dev_2d41f3d1c925ed21",
+        "type": "AP",
+        "name": "U7 Library L1-02",
+        "model": "Ubiquiti U7",
+        "serial": "",
+        "ip": "10.14.58.7",
+        "url": "http://10.14.59.47"
+    },
+    {
+        "id": "dev_6e3a7f30e3ba89d1",
+        "type": "AP",
+        "name": "U7 Library L1-03",
+        "model": "Ubiquiti U7",
+        "serial": "",
+        "ip": "10.14.58.66",
+        "url": "http://10.14.58.66"
+    },
+    {
+        "id": "dev_8b44bf2a44e6ec5a",
+        "type": "AP",
+        "name": "U7 Library L1-04",
+        "model": "Ubiquiti U7",
+        "serial": "",
+        "ip": "10.14.58.110",
+        "url": "http://10.14.58.110"
+    },
+    {
+        "id": "dev_77ff30eebff2021d",
+        "type": "AP",
+        "name": "U7 Library L2-01",
+        "model": "Ubiquiti U7",
+        "serial": "",
+        "ip": "10.14.59.65",
+        "url": "http://10.14.56.22"
+    },
+    {
+        "id": "dev_9e48103255b175a6",
+        "type": "AP",
+        "name": "U7 Library L2-02",
+        "model": "Ubiquiti U7",
+        "serial": "",
+        "ip": "10.14.59.64",
+        "url": "http://10.14.56.38"
+    },
+    {
+        "id": "dev_97f5d657d60ab030",
+        "type": "AP",
+        "name": "U7 Library L2-03",
+        "model": "Ubiquiti U7",
+        "serial": "",
+        "ip": "10.14.59.41",
+        "url": "http://10.14.56.39"
+    },
+    {
+        "id": "dev_bcc2613b280b0207",
+        "type": "AP",
+        "name": "U7 Library L2-04",
+        "model": "Ubiquiti U7",
+        "serial": "",
+        "ip": "10.14.59.62",
+        "url": "http://10.14.56.28"
+    },
+    {
+        "id": "dev_1edfeebfce85283e",
+        "type": "AP",
+        "name": "lib_04",
+        "model": "H3C WA2620E-AGN",
+        "serial": "",
+        "ip": "10.14.51.45",
+        "url": "http://10.14.51.45"
+    },
+    {
+        "id": "dev_770751e40b9bc7fc",
+        "type": "AP",
+        "name": "lib_05",
+        "model": "H3C WA2620E-AGN",
+        "serial": "",
+        "ip": "10.14.51.126",
+        "url": "http://10.14.51.126"
+    },
+    {
+        "id": "dev_8b32351aa3e7041f",
+        "type": "AP",
+        "name": "admin_08",
+        "model": "H3C WA2620E-AGN",
+        "serial": "",
+        "ip": "10.14.49.102",
+        "url": "http://10.14.49.102"
+    },
+    {
+        "id": "dev_1ff5acb932063d9d",
+        "type": "AP",
+        "name": "asrama_c1",
+        "model": "H3C WA2620E-AGN",
+        "serial": "",
+        "ip": "10.14.56.181",
+        "url": "http://10.14.56.181"
+    },
+    {
+        "id": "dev_d306d5acb59d6fae",
+        "type": "AP",
+        "name": "comlab_01",
+        "model": "H3C WA2620E-AGN",
+        "serial": "",
+        "ip": "10.14.49.55",
+        "url": "http://10.14.49.55"
+    },
+    {
+        "id": "dev_2a4dd2e9b3df21c9",
+        "type": "AP",
+        "name": "comlab_02",
+        "model": "H3C WA2620E-AGN",
+        "serial": "",
+        "ip": "10.14.49.99",
+        "url": "http://10.14.49.99"
+    },
+    {
+        "id": "dev_08ef3ab2056d6a5d",
+        "type": "AP",
+        "name": "lect_hall_a",
+        "model": "H3C WA2620E-AGN",
+        "serial": "",
+        "ip": "10.14.50.21",
+        "url": "http://10.14.50.21"
+    },
+    {
+        "id": "dev_f88e0be1d1c0af47",
+        "type": "AP",
+        "name": "lect_hall_gf",
+        "model": "H3C WA2620E-AGN",
+        "serial": "",
+        "ip": "10.14.50.28",
+        "url": "http://10.14.50.28"
+    }
+]

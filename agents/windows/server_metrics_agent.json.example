@@ -1,0 +1,8 @@
+{
+  "device_id": "PASTE_DEVICE_ID",
+  "token": "PASTE_TOKEN_ONCE",
+  "push_url": "http://127.0.0.1/zurie/api/server_metrics_push.php",
+  "services": [],
+  "processes": ["httpd", "mysqld"],
+  "timeout_seconds": 20
+}

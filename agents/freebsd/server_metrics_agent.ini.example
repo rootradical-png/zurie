@@ -1,0 +1,5 @@
+device_id="PASTE_DEVICE_ID"
+token="PASTE_TOKEN_ONCE"
+push_url="http://www.kmp.matrik.edu.my/zurie/api/server_metrics_push.php"
+services="apache24,mysql-server"
+timeout_seconds=20

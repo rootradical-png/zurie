@@ -1,0 +1,87 @@
+.zurie-matric-preview{
+    --preview-accent:#0a4ea3;
+    --preview-panel:rgba(4,45,105,.95);
+    position:relative;
+    width:min(100%,360px);
+    aspect-ratio:999/1575;
+    margin:0 auto;
+    overflow:hidden;
+    border-radius:17px;
+    background-position:center;
+    background-repeat:no-repeat;
+    background-size:100% 100%;
+    box-shadow:0 18px 38px rgba(15,23,42,.2);
+    isolation:isolate;
+}
+.zurie-matric-preview.theme-ma{
+    --preview-accent:#09aee9;
+    --preview-panel:linear-gradient(180deg,rgba(8,73,151,.97),rgba(4,38,97,.98));
+    background-image:url('/zurie/assets/img/matric-preview/template_ma_blue.jpg');
+}
+.zurie-matric-preview.theme-ms{
+    --preview-accent:#ff6b13;
+    --preview-panel:linear-gradient(180deg,rgba(240,94,17,.97),rgba(199,54,9,.98));
+    background-image:url('/zurie/assets/img/matric-preview/template_ms_orange.jpg');
+}
+.zurie-matric-preview.is-compact{width:min(100%,285px);border-radius:13px}
+ .zurie-matric-session{display:none;
+    position:absolute;left:29%;top:25.2%;width:42%;z-index:4;
+    text-align:center;font:800 clamp(9px,2.1vw,15px)/1.1 Arial,sans-serif;color:#111;
+    white-space:nowrap;
+}
+.zurie-matric-photo-placeholder,
+.zurie-matric-photo{
+    position:absolute;left:28.2%;top:32.2%;width:43.1%;height:34.2%;
+    border-radius:4.5%;
+}
+.zurie-matric-photo-placeholder{
+    z-index:2;display:flex;align-items:center;justify-content:center;
+    color:#94a3b8;background:linear-gradient(145deg,#f8fafc,#e2e8f0);
+    border:2px solid rgba(255,255,255,.9);text-align:center;font:800 12px/1.35 Arial,sans-serif;
+}
+.zurie-matric-photo{z-index:3;display:block;object-fit:cover;object-position:center 26%;background:#fff}
+.zurie-matric-data{
+    position:absolute;left:11.5%;top:67.2%;width:77%;height:15.9%;z-index:5;
+    display:flex;flex-direction:column;justify-content:center;align-items:center;gap:2.4%;
+    padding:2% 2.8%;box-sizing:border-box;border-radius:10px;
+    background:var(--preview-panel);box-shadow:0 7px 18px rgba(15,23,42,.22);
+    color:#fff;text-align:center;text-shadow:0 1px 2px rgba(0,0,0,.45);
+}
+.zurie-matric-name{
+    width:100%;font:800 clamp(8px,2.05vw,14px)/1.08 Arial,sans-serif;
+    text-transform:uppercase;display:-webkit-box;-webkit-line-clamp:2;-webkit-box-orient:vertical;overflow:hidden;
+}
+.zurie-matric-nokp,.zurie-matric-number{font:800 clamp(8px,1.95vw,13px)/1.02 Arial,sans-serif;letter-spacing:.05px}
+.zurie-matric-barcode-wrap{
+    position:absolute;left:13%;top:84.9%;width:74%;height:10%;z-index:5;
+    display:flex;align-items:center;justify-content:center;padding:1.5% 2.5%;box-sizing:border-box;
+    border-radius:9px;background:#fff;box-shadow:0 5px 14px rgba(15,23,42,.18);
+}
+.zurie-matric-barcode{display:block;width:100%;height:100%;border-radius:5px}
+.zurie-matric-watermark{
+    position:absolute;left:-7%;top:52.5%;width:114%;z-index:8;
+    text-align:center;white-space:nowrap;pointer-events:none;user-select:none;
+    font:900 clamp(27px,8.2vw,57px)/1 Arial,sans-serif;letter-spacing:1px;
+    color:rgba(255,255,255,.19);text-shadow:0 1px 1px rgba(0,0,0,.08);
+}
+.zurie-matric-note{margin:0 auto 2px;max-width:360px;text-align:center;color:#475569;font-size:12px;line-height:1.45}
+.zurie-matric-preview-wrap{display:flex;flex-direction:column;justify-content:flex-start;align-items:center;padding:4px;gap:8px}
+@media(max-width:700px){
+    .zurie-matric-preview{width:min(100%,340px)}
+    .zurie-matric-data{border-radius:8px}
+}
+
+.zurie-matric-topnote{
+  position:absolute;
+  top:2.8%;
+  left:0;
+  width:100%;
+  text-align:center;
+  color:#fff !important;
+  font:800 clamp(9px,1.95vw,13px)/1.1 Arial,sans-serif;
+  letter-spacing:.7px;
+  text-transform:uppercase;
+  z-index:9;
+  text-shadow:0 1px 2px rgba(0,0,0,.55);
+  pointer-events:none;
+}

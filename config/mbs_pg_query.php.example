@@ -1,0 +1,37 @@
+<?php
+// Salin fail ini ke:
+// C:\xampp_baru\secure\mbs_pg_query.php
+//
+// Query WAJIB pulangkan tepat 5 alias:
+// name, jw_hari, jw_masa, room_name, description
+//
+// PENTING: Jangan hardcode semester seperti "= 49".
+// Guna parameter ":semester" supaya Semester ID boleh dipilih pada halaman Sync Jadual MBS.
+return [
+    'default_semester' => 49,
+    'sql' => <<<'SQL'
+/*
+PASTE QUERY EXTRACT POSTGRESQL DI SINI.
+
+Contoh:
+SELECT
+    ... AS name,
+    ... AS jw_hari,
+    ... AS jw_masa,
+    ... AS room_name,
+    ... AS description
+FROM ...
+WHERE semester_id = :semester
+ORDER BY room_name, jw_hari, jw_masa
+*/
+SELECT
+    ''::text AS name,
+    ''::text AS jw_hari,
+    ''::text AS jw_masa,
+    ''::text AS room_name,
+    ''::text AS description
+WHERE FALSE
+  AND :semester > 0
+SQL,
+    'params' => [],
+];

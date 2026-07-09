@@ -1,0 +1,21 @@
+<?php
+/**
+ * SALIN fail ini ke:
+ * C:\xampp_baru\secure\zurie_pg_live_config.php
+ *
+ * Jangan simpan akaun PostgreSQL pentadbir. Guna akaun read-only khas Zurie.
+ */
+return [
+    'enabled' => true,
+    'host' => '10.14.48.75',
+    'port' => 5432,
+    'dbname' => 'matrik2011/2012',
+    'user' => 'zurie_reader',
+    'password' => 'TUKAR_PASSWORD_READ_ONLY',
+    'sslmode' => 'prefer',
+
+    // Semester semasa dan kod status pelajar aktif.
+    'semester' => 49,
+    'active_status' => '01',
+    'connect_timeout' => 5,
+];

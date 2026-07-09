@@ -1,0 +1,4 @@
+Options -Indexes
+<Files "reset_portal_login.php">
+    Require all denied
+</Files>

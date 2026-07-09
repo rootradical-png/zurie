@@ -1,0 +1,13 @@
+<?php
+// Salin fail ini ke: C:/xampp_baru/secure/isims_mysql_config.php
+// Jangan letak password sebenar dalam folder htdocs/public.
+return [
+    'enabled' => true,
+    'host' => '127.0.0.1',
+    'port' => 3306,
+    'dbname' => 'db_pelajarkmp',
+    'user' => 'isims_sync_user',
+    'password' => 'TUKAR_PASSWORD',
+    'charset' => 'utf8',
+    'timeout' => 8,
+];

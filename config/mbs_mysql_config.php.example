@@ -1,0 +1,16 @@
+<?php
+// Salin fail ini ke:
+// C:\xampp_baru\secure\mbs_mysql_config.php
+// Elakkan simpan kata laluan sebenar dalam folder web.
+return [
+    'enabled' => true,
+    'host' => 'localhost',
+    'port' => 3306,
+    'dbname' => 'TimetableMBS',
+    'user' => 'root',
+    'password' => '',
+    'charset' => 'utf8mb4',
+    'entry_table' => 'mrbs_entry',
+    'room_table' => 'mrbs_room',
+    'timezone' => 'Asia/Kuala_Lumpur',
+];

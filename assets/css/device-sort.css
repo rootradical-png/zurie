@@ -1,0 +1,86 @@
+.device-list-tools,
+.device-manager-tools {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  flex-wrap: wrap;
+}
+.device-list-tools .search-input,
+.device-manager-tools .search-input {
+  flex: 1 1 280px;
+  min-width: 220px;
+}
+.sort-select-label {
+  display: inline-flex;
+  align-items: center;
+  gap: 7px;
+  color: var(--muted, #9ba9c2);
+  font-size: 12px;
+  white-space: nowrap;
+}
+.sort-select {
+  min-height: 36px;
+  padding: 7px 30px 7px 10px;
+  border-radius: 9px;
+  border: 1px solid rgba(125, 154, 206, .24);
+  background: rgba(10, 18, 38, .82);
+  color: #eaf2ff;
+  outline: none;
+}
+.sort-select:focus {
+  border-color: rgba(62, 139, 255, .72);
+  box-shadow: 0 0 0 3px rgba(62, 139, 255, .12);
+}
+.sort-help {
+  margin: 7px 0 8px;
+  font-size: 11px;
+  color: var(--muted, #8997b1);
+}
+.sortable-th {
+  padding: 0 !important;
+}
+.sortable-th > button {
+  width: 100%;
+  min-height: 38px;
+  display: inline-flex;
+  align-items: center;
+  justify-content: flex-start;
+  gap: 6px;
+  padding: 8px 10px;
+  border: 0;
+  background: transparent;
+  color: inherit;
+  font: inherit;
+  font-weight: 700;
+  cursor: pointer;
+  text-align: left;
+  white-space: nowrap;
+}
+.sortable-th > button:hover,
+.sortable-th > button.active-sort {
+  color: #75b7ff;
+  background: rgba(55, 132, 255, .08);
+}
+.sort-arrow {
+  display: inline-block;
+  min-width: 10px;
+  font-size: 9px;
+  color: #45a6ff;
+}
+@media (max-width: 760px) {
+  .device-list-tools,
+  .device-manager-tools {
+    align-items: stretch;
+  }
+  .sort-select-label,
+  .sort-select {
+    width: 100%;
+  }
+  .sort-select-label {
+    justify-content: space-between;
+  }
+  .sortable-th > button {
+    min-height: 34px;
+    padding: 7px 8px;
+  }
+}

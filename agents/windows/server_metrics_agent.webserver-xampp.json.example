@@ -1,0 +1,8 @@
+{
+  "device_id": "PASTE_DEVICE_ID_WEBSITE_KMP",
+  "token": "PASTE_TOKEN_WEBSITE_KMP",
+  "push_url": "http://127.0.0.1/zurie/api/server_metrics_push.php",
+  "services": [],
+  "processes": ["httpd", "mysqld"],
+  "timeout_seconds": 20
+}

@@ -1,0 +1,5 @@
+device_id="DEVICE_ID_MIS"
+token="TOKEN_MIS"
+push_url="http://www.kmp.matrik.edu.my/zurie/api/server_metrics_push.php"
+services=""
+timeout_seconds="20"

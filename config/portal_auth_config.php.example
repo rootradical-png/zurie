@@ -1,0 +1,11 @@
+<?php
+// Fail sebenar portal_auth_config.php akan dijana oleh:
+// /zurie/security/setup_portal_login.php
+return [
+    'username' => 'zurie',
+    'password_hash' => 'PASSWORD_HASH_DIJANA_OTOMATIK',
+    'idle_timeout_seconds' => 1200,
+    'absolute_timeout_seconds' => 28800,
+    'max_failed_attempts' => 5,
+    'lock_seconds' => 900,
+];

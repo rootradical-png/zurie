@@ -1,0 +1,531 @@
+{
+  "areas": [
+    {
+      "id": "left",
+      "name": "BLOK & ASRAMA",
+      "x": 20,
+      "y": 30,
+      "w": 370,
+      "h": 820
+    },
+    {
+      "id": "admin",
+      "name": "BLOK PENTADBIRAN",
+      "x": 420,
+      "y": 30,
+      "w": 370,
+      "h": 360
+    },
+    {
+      "id": "lecturer",
+      "name": "BLOK PENSYARAH",
+      "x": 810,
+      "y": 30,
+      "w": 360,
+      "h": 360
+    },
+    {
+      "id": "library",
+      "name": "PERPUSTAKAAN & PEJABAT ASRAMA",
+      "x": 420,
+      "y": 420,
+      "w": 370,
+      "h": 430
+    },
+    {
+      "id": "labs",
+      "name": "BLOK MAKMAL KOMPUTER",
+      "x": 1190,
+      "y": 30,
+      "w": 390,
+      "h": 430
+    },
+    {
+      "id": "ict",
+      "name": "UNIT DATA DAN MAKLUMAT / ICT",
+      "x": 810,
+      "y": 420,
+      "w": 770,
+      "h": 430
+    }
+  ],
+  "devices": [
+    {
+      "id": "ibnu",
+      "name": "Ibnu Khaldun",
+      "ip": "10.14.60.33",
+      "type": "switch",
+      "location": "Blok Ibnu Khaldun",
+      "x": 70,
+      "y": 85,
+      "enabled": true
+    },
+    {
+      "id": "dewan",
+      "name": "Dewan Kuliah",
+      "ip": "10.14.60.21",
+      "type": "switch",
+      "location": "Dewan Kuliah",
+      "x": 70,
+      "y": 190,
+      "enabled": true
+    },
+    {
+      "id": "sains",
+      "name": "Makmal Sains",
+      "ip": "10.14.60.22",
+      "type": "switch",
+      "location": "Makmal Sains",
+      "x": 70,
+      "y": 295,
+      "enabled": true
+    },
+    {
+      "id": "tut-a",
+      "name": "Tutoran A",
+      "ip": "10.14.60.23",
+      "type": "switch",
+      "location": "Tutoran A / R&D",
+      "x": 70,
+      "y": 400,
+      "enabled": true
+    },
+    {
+      "id": "tut-b",
+      "name": "Tutoran B",
+      "ip": "10.14.60.24",
+      "type": "switch",
+      "location": "Tutoran B",
+      "x": 70,
+      "y": 505,
+      "enabled": true
+    },
+    {
+      "id": "a3",
+      "name": "Asrama A3",
+      "ip": "10.14.60.25",
+      "type": "switch",
+      "location": "Asrama A3",
+      "x": 70,
+      "y": 610,
+      "enabled": true
+    },
+    {
+      "id": "c1",
+      "name": "Asrama C1",
+      "ip": "10.14.60.26",
+      "type": "switch",
+      "location": "Asrama C1",
+      "x": 70,
+      "y": 715,
+      "enabled": true
+    },
+    {
+      "id": "adm7",
+      "name": "ADM 07",
+      "ip": "10.14.60.98",
+      "type": "ap",
+      "location": "Blok Pentadbiran",
+      "x": 455,
+      "y": 85,
+      "enabled": true
+    },
+    {
+      "id": "adm8",
+      "name": "ADM 08",
+      "ip": "10.14.60.114",
+      "type": "ap",
+      "location": "Blok Pentadbiran",
+      "x": 455,
+      "y": 195,
+      "enabled": true
+    },
+    {
+      "id": "admin-sw",
+      "name": "Admin Switch",
+      "ip": "10.14.60.3",
+      "type": "switch",
+      "location": "Blok Pentadbiran",
+      "x": 580,
+      "y": 285,
+      "enabled": true
+    },
+    {
+      "id": "hall-out",
+      "name": "Hall OUT",
+      "ip": "10.14.60.21",
+      "type": "ap",
+      "location": "Blok Pensyarah",
+      "x": 845,
+      "y": 85,
+      "enabled": true
+    },
+    {
+      "id": "hall-in",
+      "name": "Hall IN",
+      "ip": "10.14.60.22",
+      "type": "ap",
+      "location": "Blok Pensyarah",
+      "x": 845,
+      "y": 195,
+      "enabled": true
+    },
+    {
+      "id": "lect-sw",
+      "name": "Lecturer Switch",
+      "ip": "10.14.60.2",
+      "type": "switch",
+      "location": "Blok Pensyarah",
+      "x": 970,
+      "y": 285,
+      "enabled": true
+    },
+    {
+      "id": "lib-ap",
+      "name": "Library AP",
+      "ip": "10.14.60.19",
+      "type": "ap",
+      "location": "Perpustakaan",
+      "x": 455,
+      "y": 480,
+      "enabled": true
+    },
+    {
+      "id": "lib-sw",
+      "name": "Library Switch",
+      "ip": "10.14.60.4",
+      "type": "switch",
+      "location": "Perpustakaan",
+      "x": 580,
+      "y": 590,
+      "enabled": true
+    },
+    {
+      "id": "hostel",
+      "name": "Pejabat Asrama",
+      "ip": "10.14.60.200",
+      "type": "switch",
+      "location": "Pejabat Asrama",
+      "x": 455,
+      "y": 720,
+      "enabled": true
+    },
+    {
+      "id": "mk5",
+      "name": "MK5 GMO FLR",
+      "ip": "10.14.60.7",
+      "type": "switch",
+      "location": "Makmal Komputer",
+      "x": 1225,
+      "y": 95,
+      "enabled": true
+    },
+    {
+      "id": "mk6",
+      "name": "MK6 1ST FLR",
+      "ip": "10.14.60.9",
+      "type": "switch",
+      "location": "Makmal Komputer",
+      "x": 1390,
+      "y": 95,
+      "enabled": true
+    },
+    {
+      "id": "mk7",
+      "name": "MK7 1ST FLR",
+      "ip": "10.14.60.239",
+      "type": "switch",
+      "location": "Makmal Komputer",
+      "x": 1225,
+      "y": 205,
+      "enabled": true
+    },
+    {
+      "id": "mk8",
+      "name": "MK8 1ST FLR",
+      "ip": "10.14.60.11",
+      "type": "switch",
+      "location": "Makmal Komputer",
+      "x": 1390,
+      "y": 205,
+      "enabled": true
+    },
+    {
+      "id": "mk9",
+      "name": "MK9 1ST FLR",
+      "ip": "10.14.60.12",
+      "type": "switch",
+      "location": "Makmal Komputer",
+      "x": 1225,
+      "y": 315,
+      "enabled": true
+    },
+    {
+      "id": "mk10",
+      "name": "MK10 1ST FLR",
+      "ip": "10.14.60.13",
+      "type": "switch",
+      "location": "Makmal Komputer",
+      "x": 1390,
+      "y": 315,
+      "enabled": true
+    },
+    {
+      "id": "web",
+      "name": "WEB",
+      "ip": "10.14.48.100",
+      "type": "server",
+      "location": "Unit Data",
+      "x": 845,
+      "y": 485,
+      "enabled": true
+    },
+    {
+      "id": "mis",
+      "name": "MIS",
+      "ip": "10.14.48.75",
+      "type": "server",
+      "location": "Unit Data",
+      "x": 1025,
+      "y": 485,
+      "enabled": true
+    },
+    {
+      "id": "portal",
+      "name": "PORTAL",
+      "ip": "10.14.48.102",
+      "type": "server",
+      "location": "Unit Data",
+      "x": 1205,
+      "y": 485,
+      "enabled": true
+    },
+    {
+      "id": "isims",
+      "name": "i-SIMS",
+      "ip": "10.14.48.80",
+      "type": "server",
+      "location": "Unit Data",
+      "x": 845,
+      "y": 590,
+      "enabled": true
+    },
+    {
+      "id": "proxy",
+      "name": "Proxy",
+      "ip": "10.14.48.101",
+      "type": "server",
+      "location": "Unit Data",
+      "x": 1025,
+      "y": 590,
+      "enabled": true
+    },
+    {
+      "id": "dns",
+      "name": "DNS / DHCP",
+      "ip": "10.14.48.71",
+      "type": "server",
+      "location": "Unit Data",
+      "x": 1205,
+      "y": 590,
+      "enabled": true
+    },
+    {
+      "id": "router",
+      "name": "TM Router",
+      "ip": "10.14.48.1",
+      "type": "router",
+      "location": "ICT",
+      "x": 1380,
+      "y": 485,
+      "enabled": true
+    },
+    {
+      "id": "firewall",
+      "name": "Palo Alto",
+      "ip": "10.14.48.2",
+      "type": "firewall",
+      "location": "ICT",
+      "x": 1380,
+      "y": 590,
+      "enabled": true
+    },
+    {
+      "id": "wifi",
+      "name": "WiFi Controller",
+      "ip": "10.14.60.5",
+      "type": "controller",
+      "location": "ICT",
+      "x": 1205,
+      "y": 700,
+      "enabled": true
+    },
+    {
+      "id": "core",
+      "name": "CORE SWITCH",
+      "ip": "10.14.60.1",
+      "type": "core",
+      "location": "ICT",
+      "x": 1380,
+      "y": 700,
+      "enabled": true
+    }
+  ],
+  "links": [
+    {
+      "from": "core",
+      "to": "firewall",
+      "speed": "40g"
+    },
+    {
+      "from": "firewall",
+      "to": "router",
+      "speed": "10g"
+    },
+    {
+      "from": "core",
+      "to": "wifi",
+      "speed": "40g"
+    },
+    {
+      "from": "core",
+      "to": "web",
+      "speed": "10g"
+    },
+    {
+      "from": "core",
+      "to": "mis",
+      "speed": "10g"
+    },
+    {
+      "from": "core",
+      "to": "portal",
+      "speed": "10g"
+    },
+    {
+      "from": "core",
+      "to": "isims",
+      "speed": "10g"
+    },
+    {
+      "from": "core",
+      "to": "proxy",
+      "speed": "10g"
+    },
+    {
+      "from": "core",
+      "to": "dns",
+      "speed": "10g"
+    },
+    {
+      "from": "core",
+      "to": "admin-sw",
+      "speed": "10g"
+    },
+    {
+      "from": "admin-sw",
+      "to": "adm7",
+      "speed": "1g"
+    },
+    {
+      "from": "admin-sw",
+      "to": "adm8",
+      "speed": "1g"
+    },
+    {
+      "from": "core",
+      "to": "lect-sw",
+      "speed": "10g"
+    },
+    {
+      "from": "lect-sw",
+      "to": "hall-out",
+      "speed": "1g"
+    },
+    {
+      "from": "lect-sw",
+      "to": "hall-in",
+      "speed": "1g"
+    },
+    {
+      "from": "core",
+      "to": "lib-sw",
+      "speed": "10g"
+    },
+    {
+      "from": "lib-sw",
+      "to": "lib-ap",
+      "speed": "1g"
+    },
+    {
+      "from": "lib-sw",
+      "to": "hostel",
+      "speed": "1g"
+    },
+    {
+      "from": "core",
+      "to": "mk5",
+      "speed": "10g"
+    },
+    {
+      "from": "core",
+      "to": "mk6",
+      "speed": "10g"
+    },
+    {
+      "from": "core",
+      "to": "mk7",
+      "speed": "10g"
+    },
+    {
+      "from": "core",
+      "to": "mk8",
+      "speed": "10g"
+    },
+    {
+      "from": "core",
+      "to": "mk9",
+      "speed": "10g"
+    },
+    {
+      "from": "core",
+      "to": "mk10",
+      "speed": "10g"
+    },
+    {
+      "from": "core",
+      "to": "ibnu",
+      "speed": "1g"
+    },
+    {
+      "from": "core",
+      "to": "dewan",
+      "speed": "1g"
+    },
+    {
+      "from": "core",
+      "to": "sains",
+      "speed": "1g"
+    },
+    {
+      "from": "core",
+      "to": "tut-a",
+      "speed": "1g"
+    },
+    {
+      "from": "core",
+      "to": "tut-b",
+      "speed": "1g"
+    },
+    {
+      "from": "core",
+      "to": "a3",
+      "speed": "1g"
+    },
+    {
+      "from": "core",
+      "to": "c1",
+      "speed": "1g"
+    }
+  ]
+}

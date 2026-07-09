@@ -1,0 +1,7 @@
+# Zurie pages protection / menu patch 20260624
+# Jangan redirect export pages balik ke root. Semua halaman export rasmi berada dalam /zurie/pages/.
+Options -Indexes
+
+<FilesMatch "\.(bak|old|orig|save|tmp|log|sql|json|ini|env)$">
+    Require all denied
+</FilesMatch>

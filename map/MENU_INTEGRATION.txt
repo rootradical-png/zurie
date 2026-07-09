@@ -1,0 +1,24 @@
+PATCH MENU UTAMA ZURIE
+=======================
+
+1. Buka fail sidebar atau menu utama ZURIE.
+2. Salin blok menu daripada:
+   /zurie/map/integration/main_menu_link.php
+3. Letakkan bersama item menu lain.
+
+Pautan standard:
+   /zurie/map/
+
+Butang dalam halaman map:
+- Menu Utama  -> ../
+- Dashboard   -> ../index.php
+
+Jika dashboard sebenar menggunakan nama fail lain, ubah dalam:
+   /zurie/map/config.php
+
+Contoh:
+'navigation' => [
+    'main_menu_url' => '/zurie/',
+    'dashboard_url' => '/zurie/dashboard.php',
+    'map_url' => '/zurie/map/',
+],

@@ -1,0 +1,15 @@
+<?php
+return [
+    'enabled' => false,
+    'driver' => 'winscp',
+    'host' => 'mis.kmp.matrik.edu.my',
+    'port' => 22,
+    'username' => 'ISI_USERNAME_SFTP',
+    'password' => 'ISI_PASSWORD_ATAU_KOSONGKAN_JIKA_GUNA_KEY',
+    'private_key' => '',
+    'private_key_passphrase' => '',
+    'remote_dir' => '/usr/local/www/apache22/data/misv3/pictures/student',
+    'host_key' => 'ISI_FINGERPRINT_HOST_SFTP',
+    'winscp_path' => 'C:\\Program Files (x86)\\WinSCP\\WinSCP.com',
+    'timeout' => 30,
+];

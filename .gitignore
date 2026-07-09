@@ -1,0 +1,10 @@
+config.php
+.env
+*.log
+backup/
+uploads/
+vendor/
+node_modules/
+upload/
+*.zip
+*Copy.htaccess

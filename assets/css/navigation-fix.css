@@ -1,0 +1,16 @@
+/* Navigation rollback: keep original fixed sidebar and native links. */
+.noc-sidebar{
+  position:fixed!important;
+  top:0!important;
+  left:0!important;
+  bottom:0!important;
+}
+.noc-menu,
+.noc-menu .menu-group,
+.noc-menu .submenu-wrap{
+  pointer-events:auto!important;
+}
+.noc-menu .submenu-link{
+  pointer-events:auto!important;
+  cursor:pointer!important;
+}

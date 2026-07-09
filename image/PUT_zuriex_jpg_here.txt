@@ -1,0 +1,1 @@
+Letakkan gambar logo di sini sebagai zuriex.jpg, atau pastikan fail wujud di /image/zuriex.jpg pada web server.

@@ -1,0 +1,12 @@
+# Personal NOC Portal - LOGIN WAJIB
+Options -Indexes
+DirectoryIndex index.php
+RewriteEngine Off
+
+# Server ini menggunakan PHP apache2handler (mod_php).
+# Semua fail PHP di bawah /zurie/ akan melalui auth_guard.php dahulu.
+php_value auto_prepend_file "C:/xampp_baru/htdocs/zurie/auth_guard.php"
+
+<FilesMatch "^\.(htaccess|user\.ini)$">
+    Require all denied
+</FilesMatch>
