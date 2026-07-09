@@ -8,6 +8,7 @@ declare(strict_types=1);
 
 require_once dirname(__DIR__) . '/auth_guard.php';
 require_once dirname(__DIR__) . '/lib/photo_repair.php';
+require_once dirname(__DIR__) . '/lib/photo_background_quality.php';
 require_once dirname(__DIR__) . '/lib/pg_live_lookup.php';
 require_once dirname(__DIR__) . '/lib/photo_missing_report.php';
 
@@ -60,6 +61,18 @@ function ensure_photo_audit_table(PDO $pdo): void
         quality_reason VARCHAR(255) NULL,
         quality_checked_at DATETIME NULL,
         quality_checked_by VARCHAR(100) NULL,
+        background_status VARCHAR(30) NULL,
+        background_score DECIMAL(5,1) NULL,
+        background_white_ratio DECIMAL(5,1) NULL,
+        background_uniformity DECIMAL(5,1) NULL,
+        background_brightness DECIMAL(6,1) NULL,
+        background_color_ratio DECIMAL(5,1) NULL,
+        background_shadow_ratio DECIMAL(5,1) NULL,
+        background_dominant_color VARCHAR(50) NULL,
+        background_dominant_hex VARCHAR(10) NULL,
+        background_reason VARCHAR(255) NULL,
+        background_checked_at DATETIME NULL,
+        background_checked_by VARCHAR(100) NULL,
         whatsapp_sent TINYINT(1) NOT NULL DEFAULT 0,
         whatsapp_sent_at DATETIME NULL,
         whatsapp_type VARCHAR(30) NULL,
@@ -67,6 +80,7 @@ function ensure_photo_audit_table(PDO $pdo): void
         whatsapp_source VARCHAR(50) NULL,
         whatsapp_sent_by VARCHAR(100) NULL,
         INDEX idx_quality_status (quality_status),
+        INDEX idx_background_status (background_status),
         INDEX idx_whatsapp_sent (whatsapp_sent),
         INDEX idx_photo_exists (photo_exists),
         INDEX idx_checked_at (checked_at)
@@ -77,13 +91,26 @@ function ensure_photo_audit_table(PDO $pdo): void
         "ALTER TABLE student_photo_audit ADD COLUMN quality_reason VARCHAR(255) NULL AFTER quality_status",
         "ALTER TABLE student_photo_audit ADD COLUMN quality_checked_at DATETIME NULL AFTER quality_reason",
         "ALTER TABLE student_photo_audit ADD COLUMN quality_checked_by VARCHAR(100) NULL AFTER quality_checked_at",
-        "ALTER TABLE student_photo_audit ADD COLUMN whatsapp_sent TINYINT(1) NOT NULL DEFAULT 0 AFTER quality_checked_by",
+        "ALTER TABLE student_photo_audit ADD COLUMN background_status VARCHAR(30) NULL AFTER quality_checked_by",
+        "ALTER TABLE student_photo_audit ADD COLUMN background_score DECIMAL(5,1) NULL AFTER background_status",
+        "ALTER TABLE student_photo_audit ADD COLUMN background_white_ratio DECIMAL(5,1) NULL AFTER background_score",
+        "ALTER TABLE student_photo_audit ADD COLUMN background_uniformity DECIMAL(5,1) NULL AFTER background_white_ratio",
+        "ALTER TABLE student_photo_audit ADD COLUMN background_brightness DECIMAL(6,1) NULL AFTER background_uniformity",
+        "ALTER TABLE student_photo_audit ADD COLUMN background_color_ratio DECIMAL(5,1) NULL AFTER background_brightness",
+        "ALTER TABLE student_photo_audit ADD COLUMN background_shadow_ratio DECIMAL(5,1) NULL AFTER background_color_ratio",
+        "ALTER TABLE student_photo_audit ADD COLUMN background_dominant_color VARCHAR(50) NULL AFTER background_shadow_ratio",
+        "ALTER TABLE student_photo_audit ADD COLUMN background_dominant_hex VARCHAR(10) NULL AFTER background_dominant_color",
+        "ALTER TABLE student_photo_audit ADD COLUMN background_reason VARCHAR(255) NULL AFTER background_dominant_hex",
+        "ALTER TABLE student_photo_audit ADD COLUMN background_checked_at DATETIME NULL AFTER background_reason",
+        "ALTER TABLE student_photo_audit ADD COLUMN background_checked_by VARCHAR(100) NULL AFTER background_checked_at",
+        "ALTER TABLE student_photo_audit ADD COLUMN whatsapp_sent TINYINT(1) NOT NULL DEFAULT 0 AFTER background_checked_by",
         "ALTER TABLE student_photo_audit ADD COLUMN whatsapp_sent_at DATETIME NULL AFTER whatsapp_sent",
         "ALTER TABLE student_photo_audit ADD COLUMN whatsapp_type VARCHAR(30) NULL AFTER whatsapp_sent_at",
         "ALTER TABLE student_photo_audit ADD COLUMN whatsapp_note VARCHAR(255) NULL AFTER whatsapp_type",
         "ALTER TABLE student_photo_audit ADD COLUMN whatsapp_source VARCHAR(50) NULL AFTER whatsapp_note",
         "ALTER TABLE student_photo_audit ADD COLUMN whatsapp_sent_by VARCHAR(100) NULL AFTER whatsapp_source",
         "ALTER TABLE student_photo_audit ADD INDEX idx_quality_status (quality_status)",
+        "ALTER TABLE student_photo_audit ADD INDEX idx_background_status (background_status)",
         "ALTER TABLE student_photo_audit ADD INDEX idx_whatsapp_sent (whatsapp_sent)",
     ];
     foreach ($changes as $sql) {
@@ -619,6 +646,10 @@ function audit_compute_stats(array $rows): array
         'baik' => 0,
         'repair' => 0,
         'upload_baru' => 0,
+        'bg_checked' => 0,
+        'bg_ok' => 0,
+        'bg_review' => 0,
+        'bg_reject' => 0,
         'perlu_whatsapp' => 0,
         'sudah_whatsapp' => 0,
     ];
@@ -641,6 +672,17 @@ function audit_compute_stats(array $rows): array
             $stats['repair']++;
         } elseif ($quality === 'upload_baru') {
             $stats['upload_baru']++;
+        }
+        $backgroundStatus = trim((string)($row['background_status'] ?? ''));
+        if ($backgroundStatus !== '') {
+            $stats['bg_checked']++;
+        }
+        if (in_array($backgroundStatus, ['putih', 'hampir_putih'], true)) {
+            $stats['bg_ok']++;
+        } elseif ($backgroundStatus === 'semak') {
+            $stats['bg_review']++;
+        } elseif ($backgroundStatus === 'tolak') {
+            $stats['bg_reject']++;
         }
         $waContext = audit_whatsapp_context($row);
         if ($waContext['needed']) {
@@ -1065,6 +1107,77 @@ function mis_photo_fetch_jpeg(string $matrik): ?array
 
     return null;
 }
+
+
+/**
+ * Analisis background gambar MIS dan simpan keputusan.
+ * Cadangan automatik hanya digunakan jika rekod belum dinilai secara manual.
+ *
+ * @return array<string,mixed>
+ */
+function audit_background_check(PDO $pdo, string $matrik, string $actor): array
+{
+    @set_time_limit(90);
+    $matrik = clean_matrik_audit($matrik);
+    if ($matrik === '') {
+        throw new RuntimeException('No matrik tidak sah.');
+    }
+
+    $auditStmt = $pdo->prepare("SELECT photo_exists, quality_status, quality_checked_by
+        FROM student_photo_audit WHERE UPPER(matrik)=UPPER(?) LIMIT 1");
+    $auditStmt->execute([$matrik]);
+    $current = $auditStmt->fetch();
+    if (!$current || (int)($current['photo_exists'] ?? 0) !== 1) {
+        throw new RuntimeException('Gambar MIS belum tersedia untuk analisis background.');
+    }
+
+    $mis = mis_photo_fetch_jpeg($matrik);
+    if (!$mis) {
+        throw new RuntimeException('Gambar MIS tidak dapat dimuat turun untuk analisis background.');
+    }
+
+    $analysis = zurie_photo_background_analyse((string)$mis['bytes']);
+    $save = $pdo->prepare("UPDATE student_photo_audit SET
+        background_status=?, background_score=?, background_white_ratio=?,
+        background_uniformity=?, background_brightness=?, background_color_ratio=?,
+        background_shadow_ratio=?, background_dominant_color=?, background_dominant_hex=?,
+        background_reason=?, background_checked_at=NOW(), background_checked_by=?
+        WHERE UPPER(matrik)=UPPER(?)");
+    $save->execute([
+        (string)($analysis['status'] ?? 'gagal'),
+        (float)($analysis['score'] ?? 0),
+        (float)($analysis['white_ratio'] ?? 0),
+        (float)($analysis['uniformity'] ?? 0),
+        (float)($analysis['brightness'] ?? 0),
+        (float)($analysis['color_ratio'] ?? 0),
+        (float)($analysis['shadow_ratio'] ?? 0),
+        (string)($analysis['dominant_color'] ?? '-'),
+        (string)($analysis['dominant_hex'] ?? '#000000'),
+        (string)($analysis['reason'] ?? 'Analisis background gagal.'),
+        $actor,
+        $matrik,
+    ]);
+
+    $currentQuality = trim((string)($current['quality_status'] ?? ''));
+    if ($currentQuality === '') {
+        $bgStatus = (string)($analysis['status'] ?? 'gagal');
+        $autoReason = 'Auto BG: ' . (string)($analysis['reason'] ?? '');
+        if (in_array($bgStatus, ['putih', 'hampir_putih'], true)) {
+            audit_set_quality($pdo, $matrik, 'baik', $actor, $autoReason);
+            $analysis['auto_action'] = 'baik';
+        } elseif ($bgStatus === 'tolak') {
+            audit_set_quality($pdo, $matrik, 'upload_baru', $actor, $autoReason);
+            $analysis['auto_action'] = 'upload_baru';
+        } else {
+            $analysis['auto_action'] = 'semak_manual';
+        }
+    } else {
+        $analysis['auto_action'] = 'kekal_manual';
+    }
+
+    return $analysis;
+}
+
 
 function run_photo_audit(PDO $pdo, int $limit = 0): array
 {
@@ -1505,6 +1618,7 @@ $errors = [];
 $filter = (string)($_GET['filter'] ?? 'quality_pending');
 $allowedFilters = [
     'quality_pending', 'good', 'repair', 'upload_new', 'missing',
+    'bg_ok', 'bg_review', 'bg_reject',
     'wa_pending', 'wa_sent', 'exists', 'unchecked', 'all',
 ];
 if (!in_array($filter, $allowedFilters, true)) {
@@ -1590,12 +1704,17 @@ try {
                 ], JSON_UNESCAPED_UNICODE | JSON_UNESCAPED_SLASHES);
                 exit;
             }
-        } elseif (in_array($action, ['quality_good', 'quality_upload', 'quality_reset', 'quality_repair'], true)) {
+        } elseif (in_array($action, ['quality_good', 'quality_upload', 'quality_reset', 'quality_repair', 'background_check'], true)) {
             $matrik = clean_matrik_audit((string)($_POST['matrik'] ?? ''));
             if ($matrik === '') {
                 throw new RuntimeException('No matrik tidak sah.');
             }
-            if ($action === 'quality_good') {
+            if ($action === 'background_check') {
+                $result = audit_background_check($pdo, $matrik, $actor);
+                $messages[] = $matrik . ': ' . (string)($result['label'] ?? 'Analisis siap') .
+                    ' (skor ' . number_format((float)($result['score'] ?? 0), 1) . '%). ' .
+                    (string)($result['reason'] ?? '');
+            } elseif ($action === 'quality_good') {
                 audit_set_quality($pdo, $matrik, 'baik', $actor, 'Gambar MIS diterima tanpa perubahan.');
                 $messages[] = $matrik . ' ditanda Gambar Baik.';
             } elseif ($action === 'quality_upload') {
@@ -1608,7 +1727,7 @@ try {
                 $result = audit_queue_repair_from_mis($pdo, $matrik, $actor);
                 $messages[] = $matrik . ': ' . $result['message'];
             }
-        } elseif (in_array($action, ['bulk_good', 'bulk_upload', 'bulk_repair'], true)) {
+        } elseif (in_array($action, ['bulk_good', 'bulk_upload', 'bulk_repair', 'bulk_background_check'], true)) {
             $matriks = audit_clean_matrik_list($_POST['matriks'] ?? []);
             if ($matriks === []) {
                 throw new RuntimeException('Pilih sekurang-kurangnya satu pelajar.');
@@ -1616,8 +1735,8 @@ try {
             if (count($matriks) > 50) {
                 throw new RuntimeException('Maksimum 50 rekod bagi satu tindakan pukal.');
             }
-            if ($action === 'bulk_repair' && count($matriks) > 20) {
-                throw new RuntimeException('Repair pukal maksimum 20 gambar bagi satu pusingan.');
+            if (in_array($action, ['bulk_repair', 'bulk_background_check'], true) && count($matriks) > 20) {
+                throw new RuntimeException('Repair/analisis background pukal maksimum 20 gambar bagi satu pusingan.');
             }
 
             $success = 0;
@@ -1628,6 +1747,8 @@ try {
                         audit_set_quality($pdo, $matrik, 'baik', $actor, 'Gambar MIS diterima tanpa perubahan.');
                     } elseif ($action === 'bulk_upload') {
                         audit_set_quality($pdo, $matrik, 'upload_baru', $actor, 'Pelajar perlu memuat naik gambar baharu.');
+                    } elseif ($action === 'bulk_background_check') {
+                        audit_background_check($pdo, $matrik, $actor);
                     } else {
                         audit_queue_repair_from_mis($pdo, $matrik, $actor);
                     }
@@ -1663,6 +1784,10 @@ try {
             s.stud_intake, s.stud_semester, s.stud_status" . $phoneSelect . ",
             a.photo_exists, a.photo_url, a.http_code, a.error_message, a.checked_at,
             a.quality_status, a.quality_reason, a.quality_checked_at, a.quality_checked_by,
+            a.background_status, a.background_score, a.background_white_ratio,
+            a.background_uniformity, a.background_brightness, a.background_color_ratio,
+            a.background_shadow_ratio, a.background_dominant_color, a.background_dominant_hex,
+            a.background_reason, a.background_checked_at, a.background_checked_by,
             a.whatsapp_sent, a.whatsapp_sent_at, a.whatsapp_type, a.whatsapp_note,
             a.whatsapp_source, a.whatsapp_sent_by,
             u.id AS upload_id, u.status AS upload_status, u.filename, u.original_filename,
@@ -1693,6 +1818,7 @@ try {
         $exists = (int)($row['photo_exists'] ?? 0) === 1;
         $quality = trim((string)($row['quality_status'] ?? ''));
         $waSent = (int)($row['whatsapp_sent'] ?? 0) === 1;
+        $backgroundStatus = trim((string)($row['background_status'] ?? ''));
         $waContext = audit_whatsapp_context($row);
 
         return match ($filter) {
@@ -1701,6 +1827,9 @@ try {
             'repair' => $quality === 'repair',
             'upload_new' => $quality === 'upload_baru',
             'missing' => $checked && !$exists,
+            'bg_ok' => in_array($backgroundStatus, ['putih', 'hampir_putih'], true),
+            'bg_review' => $backgroundStatus === 'semak',
+            'bg_reject' => $backgroundStatus === 'tolak',
             'wa_pending' => $waContext['needed'] && !$waSent,
             'wa_sent' => $waContext['needed'] && $waSent,
             'exists' => $exists,
@@ -1762,7 +1891,7 @@ $resetAdvancedUrl = '?filter=' . rawurlencode($filter);
 <meta name="viewport" content="width=device-width, initial-scale=1.0">
 <title>Audit & Kualiti Gambar MIS | Zurie</title>
 <style>
-body{font-family:Arial,sans-serif;background:#f4f7fb;margin:0;color:#0f172a}.wrap{max-width:1320px;margin:24px auto;padding:0 14px}.card{background:#fff;border-radius:16px;padding:18px;box-shadow:0 9px 28px rgba(15,23,42,.08);margin-bottom:14px}.top{display:flex;justify-content:space-between;gap:12px;align-items:center;flex-wrap:wrap}.title{font-size:25px;font-weight:800;margin:0}.muted{color:#64748b}.stats{display:grid;grid-template-columns:repeat(5,1fr);gap:10px}.stat{background:#f8fafc;border:1px solid #e2e8f0;border-radius:12px;padding:12px}.stat b{display:block;font-size:22px}.toolbar{display:flex;gap:7px;flex-wrap:wrap;align-items:center}.tab,.btn{border:0;border-radius:9px;padding:9px 11px;font-weight:700;text-decoration:none;display:inline-block}.tab{background:#e2e8f0;color:#0f172a}.tab.active{background:#2563eb;color:#fff}.btn{background:#2563eb;color:#fff;cursor:pointer}.btn.warn{background:#b45309}.btn.danger{background:#dc2626}.btn.ghost{background:#f1f5f9;color:#0f172a}.btn.good{background:#15803d}.btn.repair{background:#7c3aed}.btn.upload{background:#ea580c}.btn.wa{background:#16a34a;font-size:11px;padding:6px 8px}.btn.mini{font-size:11px;padding:6px 8px}.btn.reset{background:#64748b}.btn.pdf{background:#991b1b}.alert{padding:11px 13px;border-radius:11px;margin-bottom:11px}.err{background:#fee2e2;color:#991b1b}.ok{background:#dcfce7;color:#166534}input[type=text],select{padding:9px;border:1px solid #cbd5e1;border-radius:9px;background:#fff;color:#0f172a}select{min-width:130px}.filter-panel{display:grid;grid-template-columns:1.3fr repeat(6,minmax(125px,1fr)) auto auto;gap:9px;align-items:end;margin-top:14px;padding-top:14px;border-top:1px solid #e2e8f0}.filter-field{display:flex;flex-direction:column;gap:5px}.filter-field label{font-size:11px;font-weight:800;color:#475569;text-transform:uppercase}.filter-field.search-field input{width:100%;box-sizing:border-box}.filter-result{display:flex;gap:8px;align-items:center;flex-wrap:wrap;margin-top:10px}.filter-chip{background:#eff6ff;color:#1d4ed8;border:1px solid #bfdbfe;border-radius:999px;padding:5px 9px;font-size:11px;font-weight:700}.filter-count{font-weight:800;color:#0f172a}.table-wrap{overflow:auto}table{width:100%;border-collapse:collapse;min-width:1250px}th,td{padding:10px;border-bottom:1px solid #e2e8f0;text-align:left;vertical-align:top}th{font-size:12px;text-transform:uppercase;color:#475569;background:#f8fafc}.thumb{width:82px;height:102px;object-fit:cover;border-radius:9px;border:1px solid #cbd5e1;background:#f8fafc}.badge{padding:5px 8px;border-radius:999px;font-weight:800;font-size:11px;display:inline-block}.yes,.quality-good{background:#dcfce7;color:#166534}.no,.quality-missing{background:#fee2e2;color:#991b1b}.wait,.quality-pending{background:#e2e8f0;color:#334155}.quality-repair{background:#ede9fe;color:#5b21b6}.quality-upload{background:#ffedd5;color:#9a3412}.baru{background:#fef3c7;color:#92400e}.lulus{background:#dcfce7;color:#166534}.tolak{background:#fee2e2;color:#991b1b}.small{font-size:11px;color:#64748b}.action-row{display:flex;gap:5px;flex-wrap:wrap;margin-bottom:6px}.action-row form{margin:0}.wa-line{display:flex;gap:5px;align-items:center;margin-top:6px}.wa-box{width:17px;height:17px;border:1px solid #94a3b8;border-radius:4px;background:#fff;display:inline-flex;align-items:center;justify-content:center;font-size:13px;font-weight:900;color:#16a34a}.wa-box.sent{border-color:#16a34a;background:#dcfce7}.wa-cancel{border:0;background:#fee2e2;color:#991b1b;border-radius:999px;width:17px;height:17px;cursor:pointer;font-weight:900;font-size:11px;padding:0}.wa-time{font-size:10px;color:#64748b}.breadcrumb{display:flex;gap:7px;align-items:center;flex-wrap:wrap;font-size:13px;margin-bottom:11px}.breadcrumb a{color:#2563eb;text-decoration:none;font-weight:700}.breadcrumb span{color:#64748b}.bulk{position:sticky;top:0;z-index:5;background:#fff;border:1px solid #dbeafe}.quality-guide{display:grid;grid-template-columns:repeat(4,1fr);gap:8px}.guide{border:1px solid #e2e8f0;border-radius:10px;padding:10px;font-size:12px}.guide b{display:block;margin-bottom:4px}.source-grid{display:grid;grid-template-columns:repeat(6,1fr);gap:9px;margin-top:12px}.source-stat{border:1px solid #dbeafe;background:#f8fbff;border-radius:11px;padding:10px}.source-stat span{display:block;font-size:11px;color:#64748b}.source-stat b{font-size:20px}.source-note{margin-top:10px;padding:9px 11px;border-radius:9px;background:#fff7ed;color:#9a3412;border:1px solid #fed7aa;font-size:12px}.source-ok{background:#ecfdf5;color:#166534;border-color:#bbf7d0}@media(max-width:1180px){.filter-panel{grid-template-columns:repeat(4,minmax(140px,1fr))}.filter-field.search-field{grid-column:span 2}}@media(max-width:950px){.stats,.quality-guide,.source-grid{grid-template-columns:repeat(2,1fr)}.filter-panel{grid-template-columns:repeat(2,minmax(140px,1fr))}.filter-field.search-field{grid-column:span 2}}@media(max-width:600px){.source-grid{grid-template-columns:1fr 1fr}.filter-panel{grid-template-columns:1fr}.filter-field.search-field{grid-column:span 1}.filter-panel .btn{width:100%;text-align:center}}
+body{font-family:Arial,sans-serif;background:#f4f7fb;margin:0;color:#0f172a}.wrap{max-width:1320px;margin:24px auto;padding:0 14px}.card{background:#fff;border-radius:16px;padding:18px;box-shadow:0 9px 28px rgba(15,23,42,.08);margin-bottom:14px}.top{display:flex;justify-content:space-between;gap:12px;align-items:center;flex-wrap:wrap}.title{font-size:25px;font-weight:800;margin:0}.muted{color:#64748b}.stats{display:grid;grid-template-columns:repeat(5,1fr);gap:10px}.stat{background:#f8fafc;border:1px solid #e2e8f0;border-radius:12px;padding:12px}.stat b{display:block;font-size:22px}.toolbar{display:flex;gap:7px;flex-wrap:wrap;align-items:center}.tab,.btn{border:0;border-radius:9px;padding:9px 11px;font-weight:700;text-decoration:none;display:inline-block}.tab{background:#e2e8f0;color:#0f172a}.tab.active{background:#2563eb;color:#fff}.btn{background:#2563eb;color:#fff;cursor:pointer}.btn.warn{background:#b45309}.btn.danger{background:#dc2626}.btn.ghost{background:#f1f5f9;color:#0f172a}.btn.good{background:#15803d}.btn.repair{background:#7c3aed}.btn.upload{background:#ea580c}.btn.bg{background:#0369a1}.btn.wa{background:#16a34a;font-size:11px;padding:6px 8px}.btn.mini{font-size:11px;padding:6px 8px}.btn.reset{background:#64748b}.btn.pdf{background:#991b1b}.alert{padding:11px 13px;border-radius:11px;margin-bottom:11px}.err{background:#fee2e2;color:#991b1b}.ok{background:#dcfce7;color:#166534}input[type=text],select{padding:9px;border:1px solid #cbd5e1;border-radius:9px;background:#fff;color:#0f172a}select{min-width:130px}.filter-panel{display:grid;grid-template-columns:1.3fr repeat(6,minmax(125px,1fr)) auto auto;gap:9px;align-items:end;margin-top:14px;padding-top:14px;border-top:1px solid #e2e8f0}.filter-field{display:flex;flex-direction:column;gap:5px}.filter-field label{font-size:11px;font-weight:800;color:#475569;text-transform:uppercase}.filter-field.search-field input{width:100%;box-sizing:border-box}.filter-result{display:flex;gap:8px;align-items:center;flex-wrap:wrap;margin-top:10px}.filter-chip{background:#eff6ff;color:#1d4ed8;border:1px solid #bfdbfe;border-radius:999px;padding:5px 9px;font-size:11px;font-weight:700}.filter-count{font-weight:800;color:#0f172a}.table-wrap{overflow:auto}table{width:100%;border-collapse:collapse;min-width:1250px}th,td{padding:10px;border-bottom:1px solid #e2e8f0;text-align:left;vertical-align:top}th{font-size:12px;text-transform:uppercase;color:#475569;background:#f8fafc}.thumb{width:82px;height:102px;object-fit:cover;border-radius:9px;border:1px solid #cbd5e1;background:#f8fafc}.badge{padding:5px 8px;border-radius:999px;font-weight:800;font-size:11px;display:inline-block}.yes,.quality-good{background:#dcfce7;color:#166534}.no,.quality-missing{background:#fee2e2;color:#991b1b}.wait,.quality-pending{background:#e2e8f0;color:#334155}.quality-repair{background:#ede9fe;color:#5b21b6}.quality-upload{background:#ffedd5;color:#9a3412}.bg-good{background:#dcfce7;color:#166534}.bg-near{background:#ecfccb;color:#3f6212}.bg-review{background:#fef3c7;color:#92400e}.bg-reject{background:#fee2e2;color:#991b1b}.bg-failed{background:#f1f5f9;color:#475569}.bg-pending{background:#e0f2fe;color:#075985}.bg-details{margin-top:6px;padding:7px 8px;border-radius:8px;background:#f8fafc;border:1px solid #e2e8f0}.color-dot{display:inline-block;width:12px;height:12px;border-radius:50%;border:1px solid #94a3b8;vertical-align:-2px;margin-right:4px}.baru{background:#fef3c7;color:#92400e}.lulus{background:#dcfce7;color:#166534}.tolak{background:#fee2e2;color:#991b1b}.small{font-size:11px;color:#64748b}.action-row{display:flex;gap:5px;flex-wrap:wrap;margin-bottom:6px}.action-row form{margin:0}.wa-line{display:flex;gap:5px;align-items:center;margin-top:6px}.wa-box{width:17px;height:17px;border:1px solid #94a3b8;border-radius:4px;background:#fff;display:inline-flex;align-items:center;justify-content:center;font-size:13px;font-weight:900;color:#16a34a}.wa-box.sent{border-color:#16a34a;background:#dcfce7}.wa-cancel{border:0;background:#fee2e2;color:#991b1b;border-radius:999px;width:17px;height:17px;cursor:pointer;font-weight:900;font-size:11px;padding:0}.wa-time{font-size:10px;color:#64748b}.breadcrumb{display:flex;gap:7px;align-items:center;flex-wrap:wrap;font-size:13px;margin-bottom:11px}.breadcrumb a{color:#2563eb;text-decoration:none;font-weight:700}.breadcrumb span{color:#64748b}.bulk{position:sticky;top:0;z-index:5;background:#fff;border:1px solid #dbeafe}.quality-guide{display:grid;grid-template-columns:repeat(4,1fr);gap:8px}.guide{border:1px solid #e2e8f0;border-radius:10px;padding:10px;font-size:12px}.guide b{display:block;margin-bottom:4px}.source-grid{display:grid;grid-template-columns:repeat(6,1fr);gap:9px;margin-top:12px}.source-stat{border:1px solid #dbeafe;background:#f8fbff;border-radius:11px;padding:10px}.source-stat span{display:block;font-size:11px;color:#64748b}.source-stat b{font-size:20px}.source-note{margin-top:10px;padding:9px 11px;border-radius:9px;background:#fff7ed;color:#9a3412;border:1px solid #fed7aa;font-size:12px}.source-ok{background:#ecfdf5;color:#166534;border-color:#bbf7d0}@media(max-width:1180px){.filter-panel{grid-template-columns:repeat(4,minmax(140px,1fr))}.filter-field.search-field{grid-column:span 2}}@media(max-width:950px){.stats,.quality-guide,.source-grid{grid-template-columns:repeat(2,1fr)}.filter-panel{grid-template-columns:repeat(2,minmax(140px,1fr))}.filter-field.search-field{grid-column:span 2}}@media(max-width:600px){.source-grid{grid-template-columns:1fr 1fr}.filter-panel{grid-template-columns:1fr}.filter-field.search-field{grid-column:span 1}.filter-panel .btn{width:100%;text-align:center}}
 </style>
 </head>
 <body>
@@ -1777,7 +1906,7 @@ body{font-family:Arial,sans-serif;background:#f4f7fb;margin:0;color:#0f172a}.wra
         <div class="top">
             <div>
                 <h1 class="title">Audit & Kualiti Gambar MIS</h1>
-                <div class="muted">Nilai gambar MIS: kekalkan, auto repair, atau minta pelajar upload semula.</div>
+                <div class="muted">Nilai gambar MIS serta kesan background putih, hampir putih, berwarna, bayang dan background tidak bersih.</div>
             </div>
             <div>
                 <a class="btn ghost" href="/zurie/pages/pg_live_lookup_setup.php">Tetapan Pelajar Aktif</a>
@@ -1856,9 +1985,11 @@ body{font-family:Arial,sans-serif;background:#f4f7fb;margin:0;color:#0f172a}.wra
     <?php endif; ?>
 
     <div class="card quality-guide">
-        <div class="guide"><b>✅ Gambar Baik</b>Kekalkan gambar MIS tanpa perubahan.</div>
+        <div class="guide"><b>🤖 Semak BG</b>Analisis background putih, hampir putih, warna, bayang dan keseragaman.</div>
+        <div class="guide"><b>✅ BG Diterima</b>Putih atau hampir putih akan ditanda Gambar Baik jika belum dinilai.</div>
+        <div class="guide"><b>⚠️ Semak Manual</b>Background berbayang atau tidak sekata perlu pengesahan admin.</div>
+        <div class="guide"><b>⛔ BG Ditolak</b>Biru, berwarna, gelap atau tidak bersih akan dicadangkan Upload Baru.</div>
         <div class="guide"><b>🛠 Perlu Repair</b>Sistem ambil gambar MIS, crop 413×531 dan hantar ke Semakan Upload.</div>
-        <div class="guide"><b>📤 Upload Baru</b>Gambar kabur/tidak sesuai; WhatsApp pelajar.</div>
         <div class="guide"><b>❌ Tiada Gambar</b>WhatsApp pelajar untuk muat naik gambar.</div>
     </div>
 
@@ -1870,6 +2001,10 @@ body{font-family:Arial,sans-serif;background:#f4f7fb;margin:0;color:#0f172a}.wra
         <div class="stat"><span>Gambar Baik</span><b><?= stat_int($stats,'baik') ?></b></div>
         <div class="stat"><span>Perlu Repair</span><b><?= stat_int($stats,'repair') ?></b></div>
         <div class="stat"><span>Upload Baru</span><b><?= stat_int($stats,'upload_baru') ?></b></div>
+        <div class="stat"><span>BG Sudah Semak</span><b><?= stat_int($stats,'bg_checked') ?></b></div>
+        <div class="stat"><span>BG Diterima</span><b><?= stat_int($stats,'bg_ok') ?></b></div>
+        <div class="stat"><span>BG Semak Manual</span><b><?= stat_int($stats,'bg_review') ?></b></div>
+        <div class="stat"><span>BG Ditolak</span><b><?= stat_int($stats,'bg_reject') ?></b></div>
         <div class="stat"><span>Perlu WhatsApp</span><b><?= stat_int($stats,'perlu_whatsapp') ?></b></div>
         <div class="stat"><span>Sudah WhatsApp</span><b><?= stat_int($stats,'sudah_whatsapp') ?></b></div>
         <div class="stat"><span>Sudah Semak</span><b><?= stat_int($stats,'sudah_semak') ?></b></div>
@@ -1895,7 +2030,9 @@ body{font-family:Arial,sans-serif;background:#f4f7fb;margin:0;color:#0f172a}.wra
         <div class="toolbar">
             <?php foreach ([
                 'quality_pending'=>'Belum Nilai', 'good'=>'Gambar Baik', 'repair'=>'Perlu Repair',
-                'upload_new'=>'Upload Baru', 'missing'=>'Tiada Gambar', 'wa_pending'=>'Perlu WhatsApp',
+                'upload_new'=>'Upload Baru', 'missing'=>'Tiada Gambar',
+                'bg_ok'=>'BG Diterima', 'bg_review'=>'BG Semak', 'bg_reject'=>'BG Tolak',
+                'wa_pending'=>'Perlu WhatsApp',
                 'wa_sent'=>'Sudah WhatsApp', 'unchecked'=>'Belum Audit', 'exists'=>'Semua Ada MIS', 'all'=>'Semua'
             ] as $key=>$label): ?>
                 <a class="tab <?= $filter===$key?'active':'' ?>" href="<?= h($tabUrls[$key] ?? ('?filter=' . $key)) ?>"><?= h($label) ?></a>
@@ -1992,10 +2129,11 @@ body{font-family:Arial,sans-serif;background:#f4f7fb;margin:0;color:#0f172a}.wra
         <input type="hidden" name="csrf" value="<?= h($token) ?>">
         <div class="card bulk toolbar">
             <label><input type="checkbox" id="selectAll"> Pilih semua pada halaman</label>
+            <button class="btn bg mini" type="submit" name="action" value="bulk_background_check" onclick="return confirmBulk('Analisis background gambar MIS terpilih? Maksimum 20 sekali. Keputusan putih/hampir putih atau tolak akan digunakan secara automatik hanya untuk rekod yang belum dinilai.')">Semak BG Terpilih</button>
             <button class="btn good mini" type="submit" name="action" value="bulk_good" onclick="return confirmBulk('Tanda Gambar Baik untuk rekod terpilih?')">Baik Terpilih</button>
             <button class="btn repair mini" type="submit" name="action" value="bulk_repair" onclick="return confirmBulk('Auto repair gambar MIS terpilih? Maksimum 20 sekali.')">Repair Terpilih</button>
             <button class="btn upload mini" type="submit" name="action" value="bulk_upload" onclick="return confirmBulk('Tanda perlu Upload Baru untuk rekod terpilih?')">Upload Baru Terpilih</button>
-            <span class="small">Repair pukal maksimum 20; tindakan lain maksimum 50.</span>
+            <span class="small">Analisis BG dan repair pukal maksimum 20; tindakan lain maksimum 50. Semakan BG menggunakan PHP GD pada server.</span>
         </div>
 
         <div class="card table-wrap">
@@ -2023,6 +2161,7 @@ body{font-family:Arial,sans-serif;background:#f4f7fb;margin:0;color:#0f172a}.wra
                     $uploadStatus = strtolower((string)($row['upload_status'] ?? ''));
                     $uploadClass = in_array($uploadStatus, ['baru','lulus','tolak'], true) ? $uploadStatus : 'wait';
                     [$qualityLabel, $qualityClass] = quality_badge($row['quality_status'] !== null ? (string)$row['quality_status'] : null);
+                    $backgroundBadge = zurie_photo_background_badge($row['background_status'] !== null ? (string)$row['background_status'] : null);
                     $waContext = audit_whatsapp_context($row);
                     $needsWa = $waContext['needed'];
                     $waType = $waContext['type'];
@@ -2066,6 +2205,20 @@ body{font-family:Arial,sans-serif;background:#f4f7fb;margin:0;color:#0f172a}.wra
                             <br><span class="badge <?= h($qualityClass) ?>" style="margin-top:6px"><?= h($qualityLabel) ?></span>
                             <?php if (!empty($row['quality_reason'])): ?><br><span class="small"><?= h((string)$row['quality_reason']) ?></span><?php endif; ?>
                             <?php if (!empty($row['quality_checked_by'])): ?><br><span class="small">Oleh: <?= h((string)$row['quality_checked_by']) ?></span><?php endif; ?>
+                            <div class="bg-details">
+                                <span class="badge <?= h($backgroundBadge['class']) ?>"><?= h($backgroundBadge['label']) ?></span>
+                                <?php if (!empty($row['background_checked_at'])): ?>
+                                    <br><span class="small">Skor: <b><?= number_format((float)($row['background_score'] ?? 0), 1) ?>%</b>
+                                    · Putih: <?= number_format((float)($row['background_white_ratio'] ?? 0), 1) ?>%
+                                    · Seragam: <?= number_format((float)($row['background_uniformity'] ?? 0), 1) ?>%</span>
+                                    <br><span class="small"><span class="color-dot" style="background:<?= h((string)($row['background_dominant_hex'] ?? '#ffffff')) ?>"></span>
+                                    <?= h((string)($row['background_dominant_color'] ?? '-')) ?>
+                                    · Bayang: <?= number_format((float)($row['background_shadow_ratio'] ?? 0), 1) ?>%</span>
+                                    <?php if (!empty($row['background_reason'])): ?><br><span class="small"><?= h((string)$row['background_reason']) ?></span><?php endif; ?>
+                                <?php else: ?>
+                                    <br><span class="small">Belum dianalisis.</span>
+                                <?php endif; ?>
+                            </div>
                         </td>
                         <td>
                             <?php if ($uploadStatus !== ''): ?>
@@ -2082,6 +2235,7 @@ body{font-family:Arial,sans-serif;background:#f4f7fb;margin:0;color:#0f172a}.wra
                         <td>
                             <?php if ($exists): ?>
                                 <div class="action-row">
+                                    <button class="btn bg mini" type="submit" name="action" value="background_check" formaction="?<?= h($currentQueryString) ?>" onclick="if(!confirm('Analisis background <?= h($matrik) ?>? Jika belum dinilai, keputusan yang jelas akan ditanda Baik atau Upload Baru secara automatik.'))return false;this.form.querySelector('#singleMatrik').value='<?= h($matrik) ?>'">Semak BG</button>
                                     <button class="btn good mini" type="submit" name="action" value="quality_good" formaction="?<?= h($currentQueryString) ?>" onclick="this.form.querySelector('#singleMatrik').value='<?= h($matrik) ?>'">Baik</button>
                                     <button class="btn repair mini" type="submit" name="action" value="quality_repair" formaction="?<?= h($currentQueryString) ?>" onclick="if(!confirm('Ambil gambar MIS dan auto repair <?= h($matrik) ?>?'))return false;this.form.querySelector('#singleMatrik').value='<?= h($matrik) ?>'">Repair</button>
                                     <button class="btn upload mini" type="submit" name="action" value="quality_upload" formaction="?<?= h($currentQueryString) ?>" onclick="this.form.querySelector('#singleMatrik').value='<?= h($matrik) ?>'">Upload Baru</button>
