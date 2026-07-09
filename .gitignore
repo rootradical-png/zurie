@@ -23,3 +23,6 @@ backup/
 # Dependencies
 vendor/
 node_modules/
+# SFTP photo version runtime cache
+/data/photo_version_cache/
+/data/photo_versions_work/

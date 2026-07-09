@@ -333,6 +333,7 @@ $displayRole = $isGuest ? 'Guest | Read-only Monitoring' : 'ICT | KMP';
                 <div class="submenu-wrap">
                     <a class="submenu-link" href="/zurie/upload/" target="_blank" rel="noopener noreferrer" title="Borang awam untuk pelajar sahkan identiti dan muat naik foto">Borang Upload Pelajar</a>
                     <a class="submenu-link" href="/zurie/pages/photo_audit.php" title="Semak kewujudan dan kualiti gambar MIS, tandakan repair atau hantar WhatsApp">Audit Gambar MIS</a>
+                    <a class="submenu-link" href="/zurie/pages/photo_versions.php" title="Lihat semua versi gambar SFTP, pilih satu dan standardkan kepada NOMATRIK.jpg">Versi Gambar SFTP</a>
                     <a class="submenu-link" id="photoReviewLink" href="/zurie/pages/upload_review.php" title="Semak gambar asal dan repaired, lulus, tolak atau sync ke MIS">Semakan, Repair &amp; Sync</a>
                     <a class="submenu-link" href="/zurie/pages/mis_sftp_setup.php" title="Uji konfigurasi dan sambungan SFTP dari NOC ke MIS">Tetapan SFTP MIS</a>
                     <a class="submenu-link" href="/zurie/pages/pg_live_lookup_setup.php" title="Uji semakan langsung PostgreSQL untuk pelajar yang belum masuk MySQL senarai">Semakan PostgreSQL Live</a>

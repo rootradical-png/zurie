@@ -50,6 +50,7 @@ body{font-family:Arial,sans-serif;background:#f4f7fb;margin:0;color:#0f172a}.wra
 <h1 class="title">Tetapan SFTP MIS</h1>
 <p class="muted">Halaman ini tidak memaparkan password. Edit konfigurasi terus pada server NOC.</p>
 <a class="btn ghost" href="/zurie/pages/upload_review.php">← Semakan Foto</a>
+<a class="btn" href="/zurie/pages/photo_versions.php">Semak Versi Gambar SFTP</a>
 </div>
 
 <?php if ($result): ?>

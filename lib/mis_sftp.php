@@ -331,3 +331,251 @@ function zurie_mis_sftp_upload_photo(string $localFile, string $matrik, ?array $
         'bytes' => $bytes,
     ];
 }
+
+/**
+ * Validate a single remote file name. Paths are intentionally rejected so
+ * callers cannot escape the configured MIS photo directory.
+ */
+function zurie_mis_sftp_validate_remote_filename(string $filename): string
+{
+    $filename = trim(str_replace('\\', '/', $filename));
+    if ($filename === '' || str_contains($filename, '/') || str_contains($filename, "\0")) {
+        throw new InvalidArgumentException('Nama fail remote tidak sah.');
+    }
+    if ($filename === '.' || $filename === '..') {
+        throw new InvalidArgumentException('Nama fail remote tidak sah.');
+    }
+    return $filename;
+}
+
+/**
+ * Execute WinSCP commands with XML logging enabled.
+ *
+ * @return array{ok:bool,message:string,xml_text?:string}
+ */
+function zurie_mis_sftp_run_winscp_xml(array $commands, array $config): array
+{
+    $winscp = (string)($config['winscp_path'] ?? '');
+    if ($winscp === '' || !is_file($winscp)) {
+        return ['ok' => false, 'message' => 'WinSCP.com tidak ditemui pada path konfigurasi.'];
+    }
+    if (!function_exists('exec')) {
+        return ['ok' => false, 'message' => 'Fungsi PHP exec() tidak tersedia.'];
+    }
+    $tempBase = tempnam(sys_get_temp_dir(), 'zurie_sftp_xml_');
+    if ($tempBase === false) {
+        return ['ok' => false, 'message' => 'Gagal menyediakan fail sementara SFTP.'];
+    }
+    $scriptFile = $tempBase . '.txt';
+    $xmlFile = $tempBase . '.xml';
+    $logFile = $tempBase . '.log';
+    @unlink($tempBase);
+
+    $script = "option batch abort\r\noption confirm off\r\n";
+    $script .= zurie_mis_sftp_winscp_open_command($config) . "\r\n";
+    foreach ($commands as $command) {
+        $script .= $command . "\r\n";
+    }
+    $script .= "exit\r\n";
+
+    if (@file_put_contents($scriptFile, $script, LOCK_EX) === false) {
+        return ['ok' => false, 'message' => 'Gagal menulis skrip sementara WinSCP.'];
+    }
+
+    $cmd = zurie_mis_sftp_winscp_quote($winscp)
+        . ' /ini=nul /script=' . zurie_mis_sftp_winscp_quote($scriptFile)
+        . ' /xmllog=' . zurie_mis_sftp_winscp_quote($xmlFile)
+        . ' /xmlgroups'
+        . ' /log=' . zurie_mis_sftp_winscp_quote($logFile)
+        . ' /loglevel=1';
+
+    $output = [];
+    $exitCode = 1;
+    @exec($cmd . ' 2>&1', $output, $exitCode);
+
+    $log = is_file($logFile) ? (string)@file_get_contents($logFile) : '';
+    $combined = trim(implode("\n", $output) . "\n" . $log);
+    $combined = zurie_mis_sftp_safe_message($combined, $config);
+    if (strlen($combined) > 1800) {
+        $combined = substr($combined, -1800);
+    }
+
+    $xmlText = ($exitCode === 0 && is_file($xmlFile)) ? (string)@file_get_contents($xmlFile) : '';
+
+    @unlink($scriptFile);
+    @unlink($xmlFile);
+    @unlink($logFile);
+
+    if ($exitCode !== 0) {
+        return ['ok' => false, 'message' => 'WinSCP gagal (kod ' . $exitCode . '): ' . $combined];
+    }
+    if ($xmlText === '' || stripos($xmlText, '<ls') === false) {
+        return ['ok' => false, 'message' => 'Arahan WinSCP berjaya tetapi XML listing tidak dapat dibaca.'];
+    }
+
+    return ['ok' => true, 'message' => 'WinSCP XML berjaya.', 'xml_text' => $xmlText];
+}
+
+/**
+ * List image files in the configured MIS SFTP directory.
+ *
+ * @return array{ok:bool,message:string,files?:array<int,array<string,mixed>>}
+ */
+function zurie_mis_sftp_list_photo_files(?array $config = null): array
+{
+    $config = $config ?? zurie_mis_sftp_config();
+    $status = zurie_mis_sftp_config_status($config);
+    if (!$status['ready']) {
+        return ['ok' => false, 'message' => 'Konfigurasi SFTP belum lengkap: ' . implode(', ', $status['missing'])];
+    }
+
+    $remoteDir = (string)$status['remote_dir'];
+    $allowedExtensions = ['jpg', 'jpeg', 'png', 'webp', 'gif', 'bmp'];
+    $files = [];
+
+    if ($status['driver'] === 'winscp') {
+        $result = zurie_mis_sftp_run_winscp_xml([
+            'ls ' . zurie_mis_sftp_winscp_quote($remoteDir),
+        ], $config);
+        if (!$result['ok']) {
+            return $result;
+        }
+
+        $xmlText = (string)($result['xml_text'] ?? '');
+        preg_match_all('/<file\b[^>]*>(.*?)<\/file>/si', $xmlText, $fileMatches);
+        $extractValue = static function (string $block, string $tag): string {
+            if (!preg_match('/<' . preg_quote($tag, '/') . '\b[^>]*\bvalue="([^"]*)"[^>]*\/?\s*>/si', $block, $match)) {
+                return '';
+            }
+            return html_entity_decode((string)$match[1], ENT_QUOTES | ENT_XML1, 'UTF-8');
+        };
+        foreach (($fileMatches[1] ?? []) as $block) {
+            $filename = trim($extractValue((string)$block, 'filename'));
+            $type = trim($extractValue((string)$block, 'type'));
+            if ($filename === '' || $filename === '.' || $filename === '..' || strtolower($type) === 'd') {
+                continue;
+            }
+            $ext = strtolower((string)pathinfo($filename, PATHINFO_EXTENSION));
+            if (!in_array($ext, $allowedExtensions, true)) {
+                continue;
+            }
+            $files[] = [
+                'filename' => $filename,
+                'size' => max(0, (int)$extractValue((string)$block, 'size')),
+                'modified' => trim($extractValue((string)$block, 'modification')),
+                'extension' => $ext,
+                'remote_path' => $remoteDir . '/' . $filename,
+            ];
+        }
+    } else {
+        $connected = zurie_mis_sftp_ssh2_connect($config);
+        if (!$connected['ok']) {
+            return $connected;
+        }
+        $sftp = $connected['sftp'];
+        $uri = 'ssh2.sftp://' . intval($sftp) . $remoteDir;
+        $handle = @opendir($uri);
+        if ($handle === false) {
+            return ['ok' => false, 'message' => 'Folder gambar SFTP tidak dapat disenaraikan.'];
+        }
+        while (($filename = readdir($handle)) !== false) {
+            if ($filename === '.' || $filename === '..') {
+                continue;
+            }
+            $ext = strtolower((string)pathinfo($filename, PATHINFO_EXTENSION));
+            if (!in_array($ext, $allowedExtensions, true)) {
+                continue;
+            }
+            $stat = @ssh2_sftp_stat($sftp, $remoteDir . '/' . $filename);
+            if ($stat === false || (($stat['mode'] ?? 0) & 0040000) === 0040000) {
+                continue;
+            }
+            $files[] = [
+                'filename' => $filename,
+                'size' => max(0, (int)($stat['size'] ?? 0)),
+                'modified' => !empty($stat['mtime']) ? date('Y-m-d H:i:s', (int)$stat['mtime']) : '',
+                'extension' => $ext,
+                'remote_path' => $remoteDir . '/' . $filename,
+            ];
+        }
+        closedir($handle);
+    }
+
+    usort($files, static function (array $a, array $b): int {
+        return strnatcasecmp((string)$a['filename'], (string)$b['filename']);
+    });
+
+    return [
+        'ok' => true,
+        'message' => count($files) . ' fail gambar ditemui dalam SFTP MIS.',
+        'files' => $files,
+    ];
+}
+
+/**
+ * Download one file from the configured MIS photo directory.
+ *
+ * @return array{ok:bool,message:string,bytes?:int,remote_file?:string}
+ */
+function zurie_mis_sftp_download_photo_file(string $remoteFilename, string $localFile, ?array $config = null): array
+{
+    $config = $config ?? zurie_mis_sftp_config();
+    $status = zurie_mis_sftp_config_status($config);
+    if (!$status['ready']) {
+        return ['ok' => false, 'message' => 'Konfigurasi SFTP belum lengkap: ' . implode(', ', $status['missing'])];
+    }
+
+    try {
+        $remoteFilename = zurie_mis_sftp_validate_remote_filename($remoteFilename);
+    } catch (Throwable $e) {
+        return ['ok' => false, 'message' => $e->getMessage()];
+    }
+
+    $localDir = dirname($localFile);
+    if (!is_dir($localDir) && !@mkdir($localDir, 0755, true) && !is_dir($localDir)) {
+        return ['ok' => false, 'message' => 'Folder cache/tempatan tidak dapat dicipta.'];
+    }
+
+    $remoteFile = $status['remote_dir'] . '/' . $remoteFilename;
+    if ($status['driver'] === 'winscp') {
+        $result = zurie_mis_sftp_run_winscp([
+            'get -transfer=binary ' . zurie_mis_sftp_winscp_quote($remoteFile) . ' ' . zurie_mis_sftp_winscp_quote($localFile),
+        ], $config);
+        if (!$result['ok']) {
+            return ['ok' => false, 'message' => $result['message'], 'remote_file' => $remoteFile];
+        }
+    } else {
+        $connected = zurie_mis_sftp_ssh2_connect($config);
+        if (!$connected['ok']) {
+            return $connected;
+        }
+        $sftp = $connected['sftp'];
+        $source = @fopen('ssh2.sftp://' . intval($sftp) . $remoteFile, 'rb');
+        $target = @fopen($localFile, 'wb');
+        if ($source === false || $target === false) {
+            if (is_resource($source)) fclose($source);
+            if (is_resource($target)) fclose($target);
+            return ['ok' => false, 'message' => 'Fail remote tidak dapat dimuat turun.', 'remote_file' => $remoteFile];
+        }
+        $copied = stream_copy_to_stream($source, $target);
+        fclose($source);
+        fclose($target);
+        if ($copied === false) {
+            @unlink($localFile);
+            return ['ok' => false, 'message' => 'Salinan fail remote gagal.', 'remote_file' => $remoteFile];
+        }
+    }
+
+    if (!is_file($localFile) || (int)filesize($localFile) < 1) {
+        @unlink($localFile);
+        return ['ok' => false, 'message' => 'Fail remote kosong atau gagal disimpan.', 'remote_file' => $remoteFile];
+    }
+    @chmod($localFile, 0644);
+
+    return [
+        'ok' => true,
+        'message' => 'Fail SFTP berjaya dimuat turun.',
+        'bytes' => (int)filesize($localFile),
+        'remote_file' => $remoteFile,
+    ];
+}
