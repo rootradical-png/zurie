@@ -8,3 +8,12 @@ node_modules/
 upload/
 *.zip
 *Copy.htaccess
+config/export_pg_session.php
+config/ilmu_pg_config.php
+config/legacy_ap_access.php
+config/mbs_mysql_config.php
+config/portal_auth_config.php
+config/security_config.php
+config/server_metrics_config.php
+config/ubiquiti_ap_access.php
+config/vault_config.php
