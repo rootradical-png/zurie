@@ -318,6 +318,7 @@ $displayRole = $isGuest ? 'Guest | Read-only Monitoring' : 'ICT | KMP';
                     <span class="submenu-section-label">Data &amp; Export</span>
                     <a class="submenu-link" data-force-nav href="/zurie/pages/isims_extract.php" target="_self">senarai_mis_lengkap</a>
                     <a class="submenu-link" data-force-nav href="/zurie/pages/isims_senarai.php" target="_self">senarai</a>
+                    <a class="submenu-link" data-force-nav href="/zurie/pages/isims_rawatan_review.php" target="_self">Rawatan - Semak/Padam No Siri</a>
                     <a class="submenu-link" data-force-nav href="/zurie/pages/ilmu_export.php" target="_self">ILMU GL14 Export</a>
                     <a class="submenu-link" data-force-nav href="/zurie/pages/ms365_export.php" target="_self">MS 365 Student Export</a>
                     <a class="submenu-link" data-force-nav href="/zurie/pages/delima_sync.php" target="_self" title="Upload CSV akaun DELIMa, tukar format dan sync ke table delima">DELIMa</a>
@@ -540,7 +541,7 @@ $displayRole = $isGuest ? 'Guest | Read-only Monitoring' : 'ICT | KMP';
                                 <small>Peranti bermasalah dan kejadian terkini dipaparkan di sini</small>
                             </div>
                         </div>
-                        <a class="alert-view-all" href="/zurie/pages/live_ping.php?status=down">Lihat Monitoring <span>→</span></a>
+                        <a class="alert-view-all" href="/zurie/pages/live_ping.php">Lihat Monitoring <span>→</span></a>
                     </div>
                     <div id="nocAlerts" class="premium-alert-list premium-alert-list-top">
                         <div class="premium-alert-row loading"><span>…</span><div><b>Loading status...</b><small>Menunggu API NOC</small></div></div>
