@@ -183,50 +183,52 @@ function zurie_photo_background_analyse(string $imageBytes): array
         $dominantColor = 'Berwarna';
     }
 
+    /*
+     * Polisi longgar untuk kegunaan operasi:
+     * - Skor 50% dan ke atas terus diterima.
+     * - Skor bawah 50% masuk Semak Manual.
+     * - Ditolak hanya apabila background jelas sangat berbeza daripada putih
+     *   (contohnya biru pekat, warna dominan kuat atau terlalu gelap).
+     */
     $status = 'semak';
     $label = 'SEMAK MANUAL';
-    $reason = 'Background hampir sesuai tetapi perlu pengesahan admin.';
+    $reason = 'Skor background di bawah 50% dan perlu semakan ringkas admin.';
 
-    if ($bluePct >= 16.0 || ($dominantColor === 'Biru' && $colorPct >= 18.0)) {
+    $strongBlue = $bluePct >= 45.0 && $whitePct < 25.0;
+    $strongColour = in_array($dominantColor, ['Biru', 'Merah', 'Hijau', 'Berwarna'], true)
+        && $colorPct >= 60.0
+        && $whitePct < 20.0;
+    $veryDark = $avgLum < 95.0 && $darkPct >= 75.0 && $whitePct < 10.0;
+    $veryDirty = $uniformity < 12.0 && $whitePct < 10.0 && $colorPct >= 50.0;
+
+    if ($strongBlue) {
         $status = 'tolak';
-        $label = 'BUKAN PUTIH';
-        $reason = 'Background dominan biru atau kebiruan.';
-    } elseif ($colorPct >= 30.0) {
+        $label = 'BIRU JELAS';
+        $reason = 'Background biru pekat dan jelas bukan putih.';
+    } elseif ($strongColour) {
         $status = 'tolak';
-        $label = 'BERWARNA';
-        $reason = 'Background mempunyai warna yang jelas dan bukan putih.';
-    } elseif ($avgLum < 160.0 || $darkPct >= 42.0) {
+        $label = 'WARNA JELAS';
+        $reason = 'Background mempunyai warna dominan yang sangat jelas dan bukan putih.';
+    } elseif ($veryDark) {
         $status = 'tolak';
         $label = 'TERLALU GELAP';
-        $reason = 'Background terlalu gelap.';
-    } elseif ($whitePct >= 75.0 && $avgLum >= 210.0 && $colorPct <= 9.0 && $uniformity >= 52.0) {
+        $reason = 'Background terlalu gelap dan jelas bukan putih.';
+    } elseif ($veryDirty) {
+        $status = 'tolak';
+        $label = 'SANGAT TIDAK BERSIH';
+        $reason = 'Background terlalu bercorak atau mempunyai objek yang sangat ketara.';
+    } elseif ($score >= 75.0) {
         $status = 'putih';
-        $label = 'PUTIH BERSIH';
-        $reason = 'Background putih, cerah dan seragam.';
-    } elseif ($whitePct >= 50.0 && $avgLum >= 190.0 && $colorPct <= 15.0 && $uniformity >= 40.0) {
+        $label = 'PUTIH';
+        $reason = 'Skor background ' . number_format($score, 1) . '% dan diterima secara automatik.';
+    } elseif ($score >= 50.0) {
         $status = 'hampir_putih';
-        $label = 'HAMPIR PUTIH';
-        $reason = 'Background hampir putih dan masih boleh diterima.';
-    } elseif ($uniformity < 30.0 && $whitePct < 55.0) {
-        $status = 'tolak';
-        $label = 'TIDAK BERSIH';
-        $reason = 'Background tidak seragam, bercorak atau mempunyai objek/bayang kuat.';
-    } elseif ($shadowPct >= 28.0) {
+        $label = 'BOLEH DITERIMA';
+        $reason = 'Skor background ' . number_format($score, 1) . '% melepasi ambang 50% dan boleh diterima.';
+    } else {
         $status = 'semak';
-        $label = 'SEMAK BAYANG';
-        $reason = 'Background hampir putih tetapi terdapat bayang yang ketara.';
-    } elseif ($score < 42.0) {
-        $status = 'tolak';
-        $label = 'TIDAK SESUAI';
-        $reason = 'Background bukan putih atau tidak cukup bersih.';
-    } elseif ($colorPct >= 18.0) {
-        $status = 'semak';
-        $label = 'SEMAK WARNA';
-        $reason = 'Terdapat warna atau pencahayaan tidak sekata pada background.';
-    } elseif ($uniformity < 46.0) {
-        $status = 'semak';
-        $label = 'SEMAK KEBERSIHAN';
-        $reason = 'Background kurang seragam dan perlu semakan manual.';
+        $label = 'SEMAK MANUAL';
+        $reason = 'Skor background ' . number_format($score, 1) . '% di bawah ambang 50%. Semak secara manual sebelum membuat keputusan.';
     }
 
     return [

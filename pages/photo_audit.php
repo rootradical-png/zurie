@@ -647,9 +647,11 @@ function audit_compute_stats(array $rows): array
         'repair' => 0,
         'upload_baru' => 0,
         'bg_checked' => 0,
+        'bg_pending' => 0,
         'bg_ok' => 0,
         'bg_review' => 0,
         'bg_reject' => 0,
+        'bg_failed' => 0,
         'perlu_whatsapp' => 0,
         'sudah_whatsapp' => 0,
     ];
@@ -674,6 +676,9 @@ function audit_compute_stats(array $rows): array
             $stats['upload_baru']++;
         }
         $backgroundStatus = trim((string)($row['background_status'] ?? ''));
+        if ($exists && $backgroundStatus === '') {
+            $stats['bg_pending']++;
+        }
         if ($backgroundStatus !== '') {
             $stats['bg_checked']++;
         }
@@ -683,6 +688,8 @@ function audit_compute_stats(array $rows): array
             $stats['bg_review']++;
         } elseif ($backgroundStatus === 'tolak') {
             $stats['bg_reject']++;
+        } elseif ($backgroundStatus === 'gagal') {
+            $stats['bg_failed']++;
         }
         $waContext = audit_whatsapp_context($row);
         if ($waContext['needed']) {
@@ -1178,6 +1185,157 @@ function audit_background_check(PDO $pdo, string $matrik, string $actor): array
     return $analysis;
 }
 
+/**
+ * Ringkasan kategori auto background untuk pelajar aktif.
+ *
+ * @return array<string,int>
+ */
+function audit_background_category_counts(PDO $pdo): array
+{
+    $sql = "SELECT
+        SUM(CASE WHEN a.photo_exists=1 THEN 1 ELSE 0 END) AS total_images,
+        SUM(CASE WHEN a.photo_exists=1 AND TRIM(COALESCE(a.background_status,''))='' THEN 1 ELSE 0 END) AS pending,
+        SUM(CASE WHEN a.background_status IN ('putih','hampir_putih') THEN 1 ELSE 0 END) AS accepted,
+        SUM(CASE WHEN a.background_status='semak' THEN 1 ELSE 0 END) AS review,
+        SUM(CASE WHEN a.background_status='tolak' THEN 1 ELSE 0 END) AS rejected,
+        SUM(CASE WHEN a.background_status='gagal' THEN 1 ELSE 0 END) AS failed
+      FROM student_photo_audit a
+      INNER JOIN senarai s ON UPPER(s.matrik)=UPPER(a.matrik)
+      WHERE UPPER(TRIM(COALESCE(s.status,'')))='AKTIF'";
+    $row = $pdo->query($sql)->fetch() ?: [];
+    return [
+        'total_images' => (int)($row['total_images'] ?? 0),
+        'pending' => (int)($row['pending'] ?? 0),
+        'accepted' => (int)($row['accepted'] ?? 0),
+        'review' => (int)($row['review'] ?? 0),
+        'rejected' => (int)($row['rejected'] ?? 0),
+        'failed' => (int)($row['failed'] ?? 0),
+    ];
+}
+
+/**
+ * Reset keputusan auto background supaya semua gambar boleh dinilai semula
+ * menggunakan ambang semasa. Keputusan manual admin tidak disentuh.
+ *
+ * @return array<string,mixed>
+ */
+function audit_background_reset_for_recheck(PDO $pdo): array
+{
+    $pdo->beginTransaction();
+    try {
+        // Buang queue WhatsApp auto yang belum dihantar sahaja.
+        $clearWa = $pdo->exec("UPDATE student_photo_audit SET
+            whatsapp_type=NULL, whatsapp_note=NULL, whatsapp_source=NULL, whatsapp_sent_by=NULL,
+            whatsapp_sent=0, whatsapp_sent_at=NULL
+            WHERE photo_exists=1
+              AND COALESCE(whatsapp_sent,0)=0
+              AND whatsapp_source='photo_audit'
+              AND whatsapp_type='upload_baru'
+              AND quality_reason LIKE 'Auto BG:%'");
+
+        // Reset hanya keputusan kualiti yang dijana oleh Auto BG.
+        $clearQuality = $pdo->exec("UPDATE student_photo_audit SET
+            quality_status=NULL, quality_reason=NULL, quality_checked_at=NULL, quality_checked_by=NULL
+            WHERE photo_exists=1 AND quality_reason LIKE 'Auto BG:%'");
+
+        // Reset semua keputusan analisis background; keputusan manual lain kekal.
+        $resetBackground = $pdo->exec("UPDATE student_photo_audit SET
+            background_status=NULL, background_score=NULL, background_white_ratio=NULL,
+            background_uniformity=NULL, background_brightness=NULL, background_color_ratio=NULL,
+            background_shadow_ratio=NULL, background_dominant_color=NULL, background_dominant_hex=NULL,
+            background_reason=NULL, background_checked_at=NULL, background_checked_by=NULL
+            WHERE photo_exists=1");
+
+        $pdo->commit();
+        return [
+            'reset' => (int)$resetBackground,
+            'quality_reset' => (int)$clearQuality,
+            'wa_reset' => (int)$clearWa,
+            'counts' => audit_background_category_counts($pdo),
+        ];
+    } catch (Throwable $e) {
+        if ($pdo->inTransaction()) {
+            $pdo->rollBack();
+        }
+        throw $e;
+    }
+}
+
+function audit_background_mark_failed(PDO $pdo, string $matrik, string $actor, string $reason): void
+{
+    $stmt = $pdo->prepare("UPDATE student_photo_audit SET
+        background_status='gagal', background_score=0, background_white_ratio=0,
+        background_uniformity=0, background_brightness=0, background_color_ratio=0,
+        background_shadow_ratio=0, background_dominant_color='-', background_dominant_hex='#64748b',
+        background_reason=?, background_checked_at=NOW(), background_checked_by=?
+        WHERE UPPER(matrik)=UPPER(?)");
+    $stmt->execute([substr($reason, 0, 250), $actor, $matrik]);
+}
+
+/**
+ * Proses gambar belum dinilai secara batch kecil supaya satu klik boleh berjalan
+ * berterusan tanpa satu request yang terlalu panjang.
+ *
+ * @return array<string,mixed>
+ */
+function audit_background_auto_batch(PDO $pdo, int $limit, string $actor): array
+{
+    @set_time_limit(300);
+    @ignore_user_abort(true);
+    $limit = max(1, min(10, $limit));
+
+    $stmt = $pdo->prepare("SELECT a.matrik
+        FROM student_photo_audit a
+        INNER JOIN senarai s ON UPPER(s.matrik)=UPPER(a.matrik)
+        WHERE UPPER(TRIM(COALESCE(s.status,'')))='AKTIF'
+          AND a.photo_exists=1
+          AND TRIM(COALESCE(a.background_status,''))=''
+        ORDER BY a.matrik
+        LIMIT ?");
+    $stmt->bindValue(1, $limit, PDO::PARAM_INT);
+    $stmt->execute();
+    $matriks = array_values(array_filter(array_map(
+        static fn(array $row): string => clean_matrik_audit((string)($row['matrik'] ?? '')),
+        $stmt->fetchAll()
+    )));
+
+    $processed = 0;
+    $batchCounts = ['accepted' => 0, 'review' => 0, 'rejected' => 0, 'failed' => 0];
+    $failures = [];
+
+    foreach ($matriks as $matrik) {
+        try {
+            $result = audit_background_check($pdo, $matrik, $actor);
+            $status = (string)($result['status'] ?? 'gagal');
+            if (in_array($status, ['putih', 'hampir_putih'], true)) {
+                $batchCounts['accepted']++;
+            } elseif ($status === 'semak') {
+                $batchCounts['review']++;
+            } elseif ($status === 'tolak') {
+                $batchCounts['rejected']++;
+            } else {
+                $batchCounts['failed']++;
+            }
+        } catch (Throwable $e) {
+            $message = $e->getMessage() !== '' ? $e->getMessage() : 'Analisis gagal.';
+            audit_background_mark_failed($pdo, $matrik, $actor, $message);
+            $batchCounts['failed']++;
+            $failures[] = $matrik . ': ' . $message;
+        }
+        $processed++;
+    }
+
+    $counts = audit_background_category_counts($pdo);
+    return [
+        'processed' => $processed,
+        'batch' => $batchCounts,
+        'counts' => $counts,
+        'remaining' => (int)$counts['pending'],
+        'completed' => (int)$counts['pending'] === 0,
+        'failures' => array_slice($failures, 0, 5),
+    ];
+}
+
 
 function run_photo_audit(PDO $pdo, int $limit = 0): array
 {
@@ -1615,14 +1773,14 @@ function quality_badge(?string $status): array
 
 $messages = [];
 $errors = [];
-$filter = (string)($_GET['filter'] ?? 'quality_pending');
+$filter = (string)($_GET['filter'] ?? 'bg_pending');
 $allowedFilters = [
     'quality_pending', 'good', 'repair', 'upload_new', 'missing',
-    'bg_ok', 'bg_review', 'bg_reject',
+    'bg_pending', 'bg_ok', 'bg_review', 'bg_reject', 'bg_failed',
     'wa_pending', 'wa_sent', 'exists', 'unchecked', 'all',
 ];
 if (!in_array($filter, $allowedFilters, true)) {
-    $filter = 'quality_pending';
+    $filter = 'bg_pending';
 }
 $search = trim(substr((string)($_GET['q'] ?? ''), 0, 120));
 $perPage = 50;
@@ -1671,7 +1829,34 @@ try {
         require_csrf_audit();
         $action = (string)($_POST['action'] ?? '');
 
-        if ($action === 'reconcile_active') {
+        if ($action === 'auto_background_batch') {
+            header('Content-Type: application/json; charset=utf-8');
+            try {
+                $batchSize = max(1, min(10, (int)($_POST['batch_size'] ?? 10)));
+                $result = audit_background_auto_batch($pdo, $batchSize, $actor);
+                echo json_encode(['ok' => true] + $result, JSON_UNESCAPED_UNICODE | JSON_UNESCAPED_SLASHES);
+            } catch (Throwable $batchError) {
+                http_response_code(422);
+                echo json_encode([
+                    'ok' => false,
+                    'error' => $batchError->getMessage(),
+                ], JSON_UNESCAPED_UNICODE | JSON_UNESCAPED_SLASHES);
+            }
+            exit;
+        } elseif ($action === 'reset_background_auto') {
+            header('Content-Type: application/json; charset=utf-8');
+            try {
+                $result = audit_background_reset_for_recheck($pdo);
+                echo json_encode(['ok' => true] + $result, JSON_UNESCAPED_UNICODE | JSON_UNESCAPED_SLASHES);
+            } catch (Throwable $resetError) {
+                http_response_code(422);
+                echo json_encode([
+                    'ok' => false,
+                    'error' => $resetError->getMessage(),
+                ], JSON_UNESCAPED_UNICODE | JSON_UNESCAPED_SLASHES);
+            }
+            exit;
+        } elseif ($action === 'reconcile_active') {
             $result = audit_reconcile_active_students($pdo);
             $messages[] = 'Selaras pelajar aktif selesai. Disync/kemas kini: ' . $result['synced'] .
                 ', rekod lama ditanda tidak aktif: ' . $result['stale'] .
@@ -1831,9 +2016,11 @@ try {
             'repair' => $quality === 'repair',
             'upload_new' => $quality === 'upload_baru',
             'missing' => $checked && !$exists,
+            'bg_pending' => $exists && $backgroundStatus === '',
             'bg_ok' => in_array($backgroundStatus, ['putih', 'hampir_putih'], true),
             'bg_review' => $backgroundStatus === 'semak',
             'bg_reject' => $backgroundStatus === 'tolak',
+            'bg_failed' => $backgroundStatus === 'gagal',
             'wa_pending' => $waContext['needed'] && !$waSent,
             'wa_sent' => $waContext['needed'] && $waSent,
             'exists' => $exists,
@@ -1921,6 +2108,8 @@ body{font-family:Arial,sans-serif;background:#f4f7fb;margin:0;color:#0f172a}.wra
 @media(max-width:700px){.quick-stats{grid-template-columns:repeat(2,1fr)}.category-bar{grid-template-columns:1fr}.category-bar .btn{width:100%;text-align:center}}
 
 .row-more{display:inline-block;position:relative}.row-more>summary,.score-more>summary{cursor:pointer;list-style:none;font-size:11px;font-weight:800;color:#1d4ed8;background:#eff6ff;border-radius:8px;padding:6px 8px}.row-more>summary::-webkit-details-marker,.score-more>summary::-webkit-details-marker{display:none}.row-more[open] .row-menu{display:flex}.row-menu{margin-top:6px;display:flex;gap:5px;flex-wrap:wrap;padding:7px;background:#f8fafc;border:1px solid #dbeafe;border-radius:9px}.score-more{margin-top:6px}.score-more .small{display:block;margin-top:5px}
+/* Fasa 7.2: satu klik nilai semua, batch automatik dan kategori berwarna */
+.quick-stat.cat-pending{background:#eff6ff;border-color:#93c5fd}.quick-stat.cat-pending span,.quick-stat.cat-pending b{color:#1d4ed8}.quick-stat.cat-ok{background:#ecfdf5;border-color:#86efac}.quick-stat.cat-ok span,.quick-stat.cat-ok b{color:#15803d}.quick-stat.cat-review{background:#fffbeb;border-color:#fcd34d}.quick-stat.cat-review span,.quick-stat.cat-review b{color:#a16207}.quick-stat.cat-reject{background:#fef2f2;border-color:#fca5a5}.quick-stat.cat-reject span,.quick-stat.cat-reject b{color:#b91c1c}.quick-stat.cat-failed{background:#f8fafc;border-color:#cbd5e1}.quick-stat.cat-failed span,.quick-stat.cat-failed b{color:#475569}.quick-stat.cat-missing{background:#f1f5f9;border-color:#94a3b8}.quick-stat.cat-missing span,.quick-stat.cat-missing b{color:#334155}.auto-eval-card{border:1px solid #bfdbfe;background:linear-gradient(135deg,#eff6ff 0%,#ffffff 62%)}.auto-eval-title{display:flex;gap:10px;align-items:center}.auto-eval-icon{display:grid;place-items:center;width:42px;height:42px;border-radius:12px;background:#2563eb;color:#fff;font-size:22px}.auto-eval-actions{display:flex;gap:8px;flex-wrap:wrap}.auto-progress{margin-top:14px;padding:13px;border-radius:12px;background:#fff;border:1px solid #dbeafe}.auto-progress[hidden]{display:none}.progress-track{height:12px;border-radius:999px;background:#e2e8f0;overflow:hidden}.progress-fill{height:100%;width:0;background:linear-gradient(90deg,#2563eb,#22c55e);transition:width .25s}.auto-progress-head{display:flex;justify-content:space-between;gap:10px;align-items:center;margin-bottom:8px;flex-wrap:wrap}.auto-counts{display:grid;grid-template-columns:repeat(5,minmax(100px,1fr));gap:8px;margin-top:10px}.auto-count{padding:9px;border-radius:10px;text-align:center;font-weight:800}.auto-count span{display:block;font-size:10px;text-transform:uppercase;margin-bottom:3px}.auto-count.pending{background:#dbeafe;color:#1d4ed8}.auto-count.accepted{background:#dcfce7;color:#166534}.auto-count.review{background:#fef3c7;color:#92400e}.auto-count.rejected{background:#fee2e2;color:#991b1b}.auto-count.failed{background:#e2e8f0;color:#475569}.auto-log{margin-top:8px;font-size:12px;color:#475569}.btn.auto-start{background:#1d4ed8}.btn.auto-stop{background:#64748b}tr.row-bg-pending td:first-child{border-left:4px solid #60a5fa}tr.row-bg-ok td:first-child{border-left:4px solid #22c55e}tr.row-bg-review td:first-child{border-left:4px solid #f59e0b}tr.row-bg-reject td:first-child{border-left:4px solid #ef4444}tr.row-bg-failed td:first-child{border-left:4px solid #94a3b8}@media(max-width:760px){.auto-counts{grid-template-columns:repeat(2,1fr)}}
 </style>
 </head>
 <body>
@@ -2022,20 +2211,52 @@ body{font-family:Arial,sans-serif;background:#f4f7fb;margin:0;color:#0f172a}.wra
     <details class="card admin-panel">
         <summary>Panduan kategori gambar</summary>
         <div class="admin-body quality-guide">
-            <div class="guide"><b>✅ Diterima</b>Background putih atau hampir putih.</div>
-            <div class="guide"><b>⚠️ Semak Manual</b>Background berbayang atau tidak sekata.</div>
-            <div class="guide"><b>⛔ Ditolak</b>Background biru, berwarna, gelap atau tidak bersih.</div>
+            <div class="guide"><b>✅ Diterima</b>Skor background 50% dan ke atas.</div>
+            <div class="guide"><b>⚠️ Semak Manual</b>Skor bawah 50%, tetapi belum jelas untuk ditolak.</div>
+            <div class="guide"><b>⛔ Ditolak</b>Hanya background yang sangat jelas biru, berwarna kuat, terlalu gelap atau bercorak.</div>
             <div class="guide"><b>🛠 Repair</b>Crop dan pembaikan saiz sebelum semakan upload.</div>
         </div>
     </details>
 
     <div class="card quick-stats">
-        <a class="quick-stat <?= $filter==='quality_pending'?'active':'' ?>" href="<?= h($tabUrls['quality_pending']) ?>"><span>Belum Nilai</span><b><?= stat_int($stats,'belum_nilai') ?></b></a>
-        <a class="quick-stat <?= $filter==='bg_review'?'active':'' ?>" href="<?= h($tabUrls['bg_review']) ?>"><span>BG Semak Manual</span><b><?= stat_int($stats,'bg_review') ?></b></a>
-        <a class="quick-stat <?= $filter==='bg_reject'?'active':'' ?>" href="<?= h($tabUrls['bg_reject']) ?>"><span>BG Ditolak</span><b><?= stat_int($stats,'bg_reject') ?></b></a>
-        <a class="quick-stat <?= $filter==='missing'?'active':'' ?>" href="<?= h($tabUrls['missing']) ?>"><span>Tiada Gambar</span><b><?= stat_int($stats,'tiada_mis') ?></b></a>
-        <a class="quick-stat <?= $filter==='wa_pending'?'active':'' ?>" href="<?= h($tabUrls['wa_pending']) ?>"><span>Perlu WhatsApp</span><b><?= stat_int($stats,'perlu_whatsapp') ?></b></a>
-        <a class="quick-stat <?= $filter==='good'?'active':'' ?>" href="<?= h($tabUrls['good']) ?>"><span>Gambar Baik</span><b><?= stat_int($stats,'baik') ?></b></a>
+        <a class="quick-stat cat-pending <?= $filter==='bg_pending'?'active':'' ?>" href="<?= h($tabUrls['bg_pending']) ?>"><span>Belum Dinilai Auto</span><b id="statBgPending"><?= stat_int($stats,'bg_pending') ?></b></a>
+        <a class="quick-stat cat-ok <?= $filter==='bg_ok'?'active':'' ?>" href="<?= h($tabUrls['bg_ok']) ?>"><span>Diterima</span><b id="statBgAccepted"><?= stat_int($stats,'bg_ok') ?></b></a>
+        <a class="quick-stat cat-review <?= $filter==='bg_review'?'active':'' ?>" href="<?= h($tabUrls['bg_review']) ?>"><span>Semak Manual</span><b id="statBgReview"><?= stat_int($stats,'bg_review') ?></b></a>
+        <a class="quick-stat cat-reject <?= $filter==='bg_reject'?'active':'' ?>" href="<?= h($tabUrls['bg_reject']) ?>"><span>Ditolak</span><b id="statBgRejected"><?= stat_int($stats,'bg_reject') ?></b></a>
+        <a class="quick-stat cat-failed <?= $filter==='bg_failed'?'active':'' ?>" href="<?= h($tabUrls['bg_failed']) ?>"><span>Analisis Gagal</span><b id="statBgFailed"><?= stat_int($stats,'bg_failed') ?></b></a>
+        <a class="quick-stat cat-missing <?= $filter==='missing'?'active':'' ?>" href="<?= h($tabUrls['missing']) ?>"><span>Tiada Gambar</span><b><?= stat_int($stats,'tiada_mis') ?></b></a>
+    </div>
+
+    <div class="card auto-eval-card">
+        <div class="top">
+            <div class="auto-eval-title">
+                <div class="auto-eval-icon">⚡</div>
+                <div>
+                    <strong>Nilai Semua Gambar Secara Automatik</strong>
+                    <div class="small">Ambang longgar: skor 50% ke atas diterima, bawah 50% semak manual, dan hanya background yang sangat kontra ditolak.</div>
+                </div>
+            </div>
+            <div class="auto-eval-actions">
+                <button type="button" class="btn auto-start" id="autoBgStart" data-pending="<?= stat_int($stats,'bg_pending') ?>">Nilai Semua Auto</button>
+                <button type="button" class="btn ghost" id="autoBgRecheck">Nilai Semula Semua</button>
+                <button type="button" class="btn auto-stop" id="autoBgStop" hidden>Henti selepas batch ini</button>
+            </div>
+        </div>
+        <div class="auto-progress" id="autoBgProgress" hidden>
+            <div class="auto-progress-head">
+                <strong id="autoBgStatus">Menyediakan batch…</strong>
+                <span class="small" id="autoBgPercent">0%</span>
+            </div>
+            <div class="progress-track"><div class="progress-fill" id="autoBgFill"></div></div>
+            <div class="auto-counts">
+                <div class="auto-count pending"><span>Belum</span><b id="autoCountPending"><?= stat_int($stats,'bg_pending') ?></b></div>
+                <div class="auto-count accepted"><span>Diterima</span><b id="autoCountAccepted"><?= stat_int($stats,'bg_ok') ?></b></div>
+                <div class="auto-count review"><span>Semak Manual</span><b id="autoCountReview"><?= stat_int($stats,'bg_review') ?></b></div>
+                <div class="auto-count rejected"><span>Ditolak</span><b id="autoCountRejected"><?= stat_int($stats,'bg_reject') ?></b></div>
+                <div class="auto-count failed"><span>Gagal</span><b id="autoCountFailed"><?= stat_int($stats,'bg_failed') ?></b></div>
+            </div>
+            <div class="auto-log" id="autoBgLog">Jangan tutup tab ini sehingga proses selesai.</div>
+        </div>
     </div>
 
     <details class="card admin-panel">
@@ -2065,9 +2286,12 @@ body{font-family:Arial,sans-serif;background:#f4f7fb;margin:0;color:#0f172a}.wra
                 <label for="categoryFilter">Kategori Semakan</label>
                 <select id="categoryFilter" name="filter" onchange="this.form.submit()">
                     <optgroup label="Tindakan utama">
-                        <option value="quality_pending" <?= $filter==='quality_pending'?'selected':'' ?>>Belum Nilai</option>
-                        <option value="bg_review" <?= $filter==='bg_review'?'selected':'' ?>>Background - Semak Manual</option>
-                        <option value="bg_reject" <?= $filter==='bg_reject'?'selected':'' ?>>Background - Ditolak</option>
+                        <option value="bg_pending" <?= $filter==='bg_pending'?'selected':'' ?>>Belum Dinilai Auto</option>
+                        <option value="bg_ok" <?= $filter==='bg_ok'?'selected':'' ?>>Diterima - Putih / Hampir Putih</option>
+                        <option value="bg_review" <?= $filter==='bg_review'?'selected':'' ?>>Semak Manual - Kuning</option>
+                        <option value="bg_reject" <?= $filter==='bg_reject'?'selected':'' ?>>Ditolak - Merah</option>
+                        <option value="bg_failed" <?= $filter==='bg_failed'?'selected':'' ?>>Analisis Gagal - Kelabu</option>
+                        <option value="quality_pending" <?= $filter==='quality_pending'?'selected':'' ?>>Belum Nilai Manual</option>
                         <option value="missing" <?= $filter==='missing'?'selected':'' ?>>Tiada Gambar</option>
                         <option value="wa_pending" <?= $filter==='wa_pending'?'selected':'' ?>>Perlu WhatsApp</option>
                     </optgroup>
@@ -2075,7 +2299,6 @@ body{font-family:Arial,sans-serif;background:#f4f7fb;margin:0;color:#0f172a}.wra
                         <option value="good" <?= $filter==='good'?'selected':'' ?>>Gambar Baik</option>
                         <option value="repair" <?= $filter==='repair'?'selected':'' ?>>Perlu Repair</option>
                         <option value="upload_new" <?= $filter==='upload_new'?'selected':'' ?>>Perlu Upload Baru</option>
-                        <option value="bg_ok" <?= $filter==='bg_ok'?'selected':'' ?>>Background Diterima</option>
                         <option value="wa_sent" <?= $filter==='wa_sent'?'selected':'' ?>>Sudah WhatsApp</option>
                     </optgroup>
                     <optgroup label="Lain-lain">
@@ -2164,14 +2387,14 @@ body{font-family:Arial,sans-serif;background:#f4f7fb;margin:0;color:#0f172a}.wra
             <?php if ($hasAdvancedFilters): ?><span class="filter-chip"><?= h($filterSummary) ?></span><?php endif; ?>
             <?php if ($filter === 'missing'): ?><a class="btn pdf mini" href="<?= h($pdfDownloadUrl) ?>">PDF untuk HEP</a><?php endif; ?>
         </div>
-        <div class="compact-note">Selepas Semak BG, rekod akan masuk kategori Diterima, Semak Manual atau Ditolak secara automatik.</div>
+        <div class="compact-note">Klik <b>Nilai Semua Auto</b> untuk proses semua gambar belum dinilai. Kad hijau, kuning, merah dan kelabu boleh diklik untuk membuka kategori masing-masing.</div>
     </div>
 
     <form method="post" id="bulkForm" action="?<?= h($currentQueryString) ?>">
         <input type="hidden" name="csrf" value="<?= h($token) ?>">
         <div class="card bulk toolbar">
             <label><input type="checkbox" id="selectAll"> Pilih 50 pada halaman</label>
-            <button class="btn bg mini" type="submit" name="action" value="bulk_background_check" onclick="return confirmBulk('Analisis background gambar MIS terpilih? Maksimum 20 sekali. Keputusan putih/hampir putih atau tolak akan digunakan secara automatik hanya untuk rekod yang belum dinilai.')">Semak Background</button>
+            <button class="btn bg mini" type="submit" name="action" value="bulk_background_check" onclick="return confirmBulk('Analisis background untuk pilihan sahaja? Maksimum 20 sekali.')">Nilai Pilihan</button>
             <button class="btn good mini" type="submit" name="action" value="bulk_good" onclick="return confirmBulk('Tanda Gambar Baik untuk rekod terpilih?')">Tanda Baik</button>
             <button class="btn repair mini" type="submit" name="action" value="bulk_repair" onclick="return confirmBulk('Auto repair gambar MIS terpilih? Maksimum 20 sekali.')">Repair</button>
             <button class="btn upload mini" type="submit" name="action" value="bulk_upload" onclick="return confirmBulk('Tanda perlu Upload Baru untuk rekod terpilih?')">Minta Upload Baru</button>
@@ -2203,7 +2426,15 @@ body{font-family:Arial,sans-serif;background:#f4f7fb;margin:0;color:#0f172a}.wra
                     $uploadStatus = strtolower((string)($row['upload_status'] ?? ''));
                     $uploadClass = in_array($uploadStatus, ['baru','lulus','tolak'], true) ? $uploadStatus : 'wait';
                     [$qualityLabel, $qualityClass] = quality_badge($row['quality_status'] !== null ? (string)$row['quality_status'] : null);
-                    $backgroundBadge = zurie_photo_background_badge($row['background_status'] !== null ? (string)$row['background_status'] : null);
+                    $backgroundStatusRaw = trim((string)($row['background_status'] ?? ''));
+                    $backgroundBadge = zurie_photo_background_badge($backgroundStatusRaw !== '' ? $backgroundStatusRaw : null);
+                    $rowBackgroundClass = match (true) {
+                        in_array($backgroundStatusRaw, ['putih', 'hampir_putih'], true) => 'row-bg-ok',
+                        $backgroundStatusRaw === 'semak' => 'row-bg-review',
+                        $backgroundStatusRaw === 'tolak' => 'row-bg-reject',
+                        $backgroundStatusRaw === 'gagal' => 'row-bg-failed',
+                        default => 'row-bg-pending',
+                    };
                     $waContext = audit_whatsapp_context($row);
                     $needsWa = $waContext['needed'];
                     $waType = $waContext['type'];
@@ -2212,7 +2443,7 @@ body{font-family:Arial,sans-serif;background:#f4f7fb;margin:0;color:#0f172a}.wra
                     $waUrl = $waType === 'tolak' ? audit_reject_wa_url($row) : ($needsWa ? audit_wa_url($row) : '');
                     $waSent = (int)($row['whatsapp_sent'] ?? 0) === 1;
                 ?>
-                    <tr>
+                    <tr class="<?= h($rowBackgroundClass) ?>">
                         <td><?php if ($exists): ?><input class="rowCheck" type="checkbox" name="matriks[]" value="<?= h($matrik) ?>"><?php endif; ?></td>
                         <td>
                             <?php if ($exists): ?>
@@ -2372,6 +2603,160 @@ function auditPost(action, matrik, extra = {}) {
         return response.json();
     });
 }
+let autoBgRunning = false;
+let autoBgStopRequested = false;
+let autoBgInitialPending = 0;
+let autoBgProcessed = 0;
+
+function autoBgSetText(id, value) {
+    const el = document.getElementById(id);
+    if (el) el.textContent = Number(value || 0).toLocaleString('ms-MY');
+}
+function autoBgUpdateCounts(counts) {
+    if (!counts) return;
+    autoBgSetText('autoCountPending', counts.pending);
+    autoBgSetText('autoCountAccepted', counts.accepted);
+    autoBgSetText('autoCountReview', counts.review);
+    autoBgSetText('autoCountRejected', counts.rejected);
+    autoBgSetText('autoCountFailed', counts.failed);
+    autoBgSetText('statBgPending', counts.pending);
+    autoBgSetText('statBgAccepted', counts.accepted);
+    autoBgSetText('statBgReview', counts.review);
+    autoBgSetText('statBgRejected', counts.rejected);
+    autoBgSetText('statBgFailed', counts.failed);
+
+    const completed = Math.max(0, autoBgInitialPending - Number(counts.pending || 0));
+    const pct = autoBgInitialPending > 0 ? Math.min(100, Math.round((completed / autoBgInitialPending) * 100)) : 100;
+    const fill = document.getElementById('autoBgFill');
+    const pctText = document.getElementById('autoBgPercent');
+    if (fill) fill.style.width = pct + '%';
+    if (pctText) pctText.textContent = pct + '%';
+}
+async function autoBgRequestBatch() {
+    const fd = new FormData();
+    fd.append('csrf', auditCsrf);
+    fd.append('action', 'auto_background_batch');
+    fd.append('batch_size', '10');
+    const response = await fetch(location.pathname + location.search, {
+        method: 'POST',
+        body: fd,
+        headers: {'X-Requested-With': 'fetch'},
+        credentials: 'same-origin'
+    });
+    const raw = await response.text();
+    let data;
+    try { data = JSON.parse(raw); } catch (e) { throw new Error(raw.slice(0, 250) || 'Respons server tidak sah.'); }
+    if (!response.ok || !data.ok) throw new Error(data.error || ('HTTP ' + response.status));
+    return data;
+}
+async function autoBgResetForRecheck() {
+    const fd = new FormData();
+    fd.append('csrf', auditCsrf);
+    fd.append('action', 'reset_background_auto');
+    const response = await fetch(location.pathname + location.search, {
+        method: 'POST',
+        body: fd,
+        headers: {'X-Requested-With': 'fetch'},
+        credentials: 'same-origin'
+    });
+    const raw = await response.text();
+    let data;
+    try { data = JSON.parse(raw); } catch (e) { throw new Error(raw.slice(0, 250) || 'Respons server tidak sah.'); }
+    if (!response.ok || !data.ok) throw new Error(data.error || ('HTTP ' + response.status));
+    return data;
+}
+async function startAutoBackground(skipConfirm = false) {
+    if (autoBgRunning) return;
+    const startButton = document.getElementById('autoBgStart');
+    const stopButton = document.getElementById('autoBgStop');
+    const progress = document.getElementById('autoBgProgress');
+    const status = document.getElementById('autoBgStatus');
+    const log = document.getElementById('autoBgLog');
+    const pending = Number(startButton?.dataset.pending || document.getElementById('autoCountPending')?.textContent.replace(/\D/g, '') || 0);
+
+    if (pending < 1) {
+        alert('Semua gambar yang tersedia sudah dinilai.');
+        return;
+    }
+    if (!skipConfirm && !confirm('Nilai semua ' + pending.toLocaleString('ms-MY') + ' gambar yang belum dinilai?\n\nSkor 50% ke atas akan diterima. Proses berjalan 10 gambar setiap batch. Jangan tutup tab sehingga selesai.')) return;
+
+    autoBgRunning = true;
+    autoBgStopRequested = false;
+    autoBgInitialPending = pending;
+    autoBgProcessed = 0;
+    if (startButton) { startButton.disabled = true; startButton.textContent = 'Sedang menilai…'; }
+    if (stopButton) stopButton.hidden = false;
+    if (progress) progress.hidden = false;
+    if (status) status.textContent = 'Memulakan batch pertama…';
+    if (log) log.textContent = 'Jangan tutup tab ini sehingga proses selesai.';
+
+    try {
+        while (!autoBgStopRequested) {
+            const data = await autoBgRequestBatch();
+            autoBgProcessed += Number(data.processed || 0);
+            autoBgUpdateCounts(data.counts || {});
+            if (status) status.textContent = 'Diproses ' + autoBgProcessed.toLocaleString('ms-MY') + ' gambar · Baki ' + Number(data.remaining || 0).toLocaleString('ms-MY');
+            if (log) {
+                const b = data.batch || {};
+                log.textContent = 'Batch terakhir: ' + Number(data.processed || 0) + ' gambar — Diterima ' + Number(b.accepted || 0) + ', Semak Manual ' + Number(b.review || 0) + ', Ditolak ' + Number(b.rejected || 0) + ', Gagal ' + Number(b.failed || 0) + '.';
+                if (Array.isArray(data.failures) && data.failures.length) log.textContent += ' ' + data.failures.join(' | ');
+            }
+            if (data.completed || Number(data.remaining || 0) < 1 || Number(data.processed || 0) < 1) break;
+            await new Promise(resolve => setTimeout(resolve, 250));
+        }
+
+        if (autoBgStopRequested) {
+            if (status) status.textContent = 'Proses dihentikan selepas batch semasa.';
+            if (log) log.textContent = 'Klik “Nilai Semua Auto” untuk sambung baki gambar.';
+        } else {
+            if (status) status.textContent = 'Selesai — semua gambar telah diasingkan mengikut kategori.';
+            const fill = document.getElementById('autoBgFill');
+            const pctText = document.getElementById('autoBgPercent');
+            if (fill) fill.style.width = '100%';
+            if (pctText) pctText.textContent = '100%';
+            if (log) log.textContent = 'Klik kad hijau, kuning, merah atau kelabu untuk menyemak setiap kategori.';
+        }
+    } catch (error) {
+        if (status) status.textContent = 'Proses terhenti kerana ralat.';
+        if (log) log.textContent = error.message || String(error);
+    } finally {
+        autoBgRunning = false;
+        if (startButton) { startButton.disabled = false; startButton.textContent = 'Nilai Semua Auto'; startButton.dataset.pending = document.getElementById('autoCountPending')?.textContent.replace(/\D/g, '') || '0'; }
+        if (stopButton) stopButton.hidden = true;
+    }
+}
+const autoBgStart = document.getElementById('autoBgStart');
+const autoBgRecheck = document.getElementById('autoBgRecheck');
+const autoBgStop = document.getElementById('autoBgStop');
+if (autoBgStart) autoBgStart.addEventListener('click', () => startAutoBackground(false));
+if (autoBgRecheck) autoBgRecheck.addEventListener('click', async () => {
+    if (autoBgRunning) return;
+    if (!confirm('Nilai semula SEMUA gambar menggunakan ambang baharu 50%?\n\nKeputusan manual admin tidak akan dipadam. Keputusan Auto BG lama akan direset dan dinilai semula.')) return;
+    autoBgRecheck.disabled = true;
+    autoBgRecheck.textContent = 'Sedang reset…';
+    try {
+        const data = await autoBgResetForRecheck();
+        autoBgUpdateCounts(data.counts || {});
+        const pending = Number(data.counts?.pending || 0);
+        if (autoBgStart) autoBgStart.dataset.pending = String(pending);
+        if (pending < 1) {
+            alert('Tiada gambar tersedia untuk dinilai semula.');
+            return;
+        }
+        await startAutoBackground(true);
+    } catch (error) {
+        alert(error.message || String(error));
+    } finally {
+        autoBgRecheck.disabled = false;
+        autoBgRecheck.textContent = 'Nilai Semula Semua';
+    }
+});
+if (autoBgStop) autoBgStop.addEventListener('click', () => {
+    autoBgStopRequested = true;
+    autoBgStop.disabled = true;
+    autoBgStop.textContent = 'Akan berhenti…';
+});
+
 function markWaSent(matrik, waType, waNote) {
     const box = document.getElementById('waBox_' + matrik);
     const cancel = document.getElementById('waCancel_' + matrik);
