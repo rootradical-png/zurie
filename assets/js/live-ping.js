@@ -45,6 +45,29 @@
     '</article>';
   }
 
+
+  function downListCardHtml(root,device,index){
+    var paused=device.status==='PAUSED';
+    var latency=paused?'PAUSED':(device.latency_ms==null?'TIMEOUT':device.latency_ms+' ms');
+    var loss=device.packet_loss_pct==null?'--':device.packet_loss_pct+'%';
+    var sent=Number(device.sent||0);
+    var received=Number(device.received||0);
+    var history=Array.isArray(device.history)?device.history:[];
+    var latest=history.length?history[history.length-1]:null;
+    var detailUrl=serverDetailUrl(root,device);
+    var action=detailUrl
+      ? '<a class="live-ping-down-action" href="'+esc(detailUrl)+'">Detail Server</a>'
+      : (device.url?'<a class="live-ping-down-action" href="'+esc(device.url)+'" target="_blank" rel="noopener noreferrer">Buka Device</a>':'<span class="live-ping-down-action is-muted">Tiada link</span>');
+    return '<article class="live-ping-down-row is-fresh" data-ping-id="'+esc(device.id)+'">'+
+      '<div class="live-ping-down-no">'+esc(index+1)+'</div>'+
+      '<div class="live-ping-down-main"><b>'+esc(device.name)+'</b><small>'+esc(device.type)+' • '+esc(device.ip)+'</small></div>'+
+      '<div class="live-ping-down-status"><span>'+esc(device.status||'DOWN')+'</span><small>'+esc(latency)+'</small></div>'+
+      '<div class="live-ping-down-meta"><b>'+esc(received)+'/'+esc(sent)+'</b><small>reply • loss '+esc(loss)+'</small></div>'+
+      '<div class="live-ping-down-time"><b>'+esc(formatTime(latest&&latest.ts))+'</b><small>semakan terakhir</small></div>'+
+      action+
+    '</article>';
+  }
+
   function fullCardHtml(root,device){
     var paused=device.status==='PAUSED';
     var down=device.status!=='UP' && !paused;
@@ -122,15 +145,16 @@
     var state=root.querySelector('[data-live-state]');
     if(!grid)return;
     var compact=root.getAttribute('data-compact')==='1';
+    var downOnly=root.getAttribute('data-down-only')==='1';
     var devices=Array.isArray(payload.devices)?payload.devices:[];
     root._livePingDevices={};
     devices.forEach(function(d){root._livePingDevices[d.id]=d;});
-    if(!devices.length){var emptyMsg=root.getAttribute('data-empty-message')||'Tiada device dipilih. Klik <b>Pilih Device</b>.';grid.innerHTML='<div class="live-ping-empty">'+emptyMsg+'</div>';grid.setAttribute('data-count','0');return;}
+    if(!devices.length){grid.innerHTML=downOnly?'<div class="live-ping-empty live-ping-empty-good"><b>Semua device OK.</b><br>Tiada device DOWN dikesan pada semakan ini.</div>':'<div class="live-ping-empty">Tiada device dipilih. Klik <b>Pilih Device</b>.</div>';grid.setAttribute('data-count','0');return;}
     grid.setAttribute('data-count',String(devices.length));
-    grid.innerHTML=devices.map(function(device){return compact?compactCardHtml(device):fullCardHtml(root,device);}).join('');
+    grid.innerHTML=devices.map(function(device,index){return downOnly?downListCardHtml(root,device,index):(compact?compactCardHtml(device):fullCardHtml(root,device));}).join('');
     devices.forEach(function(device){
       var card=grid.querySelector('[data-ping-id="'+CSS.escape(device.id)+'"]');
-      if(card){draw(card.querySelector('canvas'),device.history||[]);setTimeout(function(){card.classList.remove('is-fresh');},850);}
+      if(card){var canvas=card.querySelector('canvas');if(canvas)draw(canvas,device.history||[]);setTimeout(function(){card.classList.remove('is-fresh');},850);}
     });
     if(compact){
       var selected=root.dataset.selectedPingId;
@@ -139,7 +163,7 @@
       if(selectedDevice){root.dataset.selectedPingId=selectedDevice.id;var selectedCard=grid.querySelector('[data-ping-id="'+CSS.escape(selectedDevice.id)+'"]');if(selectedCard)selectedCard.classList.add('is-selected');}
     }
     if(last){var diag=payload.diagnostic||{};var pausedInfo=payload.paused_count?(' • '+payload.paused_count+' pause'):'';last.textContent='Sumber '+(payload.source||'NOC Server')+' • '+(payload.packet_count||1)+' paket • '+(diag.mode||'ping')+pausedInfo+' • '+(payload.checked_at||'');}
-    if(state)state.textContent='Live • '+devices.length+' device • '+(payload.elapsed_ms||0)+' ms proses';
+    if(state)state.textContent=(downOnly?'DOWN • ':'Live • ')+devices.length+' device • '+(payload.elapsed_ms||0)+' ms proses';
   }
 
   function markOpened(root,deviceId){

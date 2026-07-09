@@ -82,13 +82,13 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
 <head>
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width,initial-scale=1,viewport-fit=cover">
-<title>Live Ping Favorites</title>
+<title><?= $isDownOnly ? 'Live Ping - Device DOWN' : 'Live Ping Favorites' ?></title>
 <link rel="icon" href="/zurie/image/zuriex.jpg">
 <link rel="stylesheet" href="../assets/css/style.css">
 <link rel="stylesheet" href="../assets/css/noc-dashboard.css">
-<link rel="stylesheet" href="../assets/css/live-ping.css?v=20260622-compactdetail1">
+<link rel="stylesheet" href="../assets/css/live-ping.css?v=20260709-downview3">
 </head>
-<body class="live-ping-page is-fit-mode">
+<body class="live-ping-page is-fit-mode <?= $isDownOnly ? 'is-down-only-mode' : '' ?>">
 <div class="live-ping-page-shell">
     <div class="live-ping-page-top">
         <div class="live-ping-title-block">
@@ -100,20 +100,21 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
             <p><?= $isDownOnly ? 'Paparan ini hanya memaparkan device yang sedang DOWN.' : 'Latency masa nyata dari server NOC • purata 4 paket • refresh setiap 10 saat' ?></p>
         </div>
         <div class="live-ping-top-actions">
-            <button type="button" class="live-ping-top-btn" data-view-toggle>⛶ Paparan Penuh</button>
             <?php if ($isDownOnly): ?>
-            <a class="live-ping-top-btn" href="live_ping.php">Semua Device</a>
-            <?php endif; ?>
+            <a class="live-ping-top-btn is-primary" href="live_ping.php">← Semua Device</a>
+            <?php else: ?>
+            <button type="button" class="live-ping-top-btn" data-view-toggle>⛶ Paparan Penuh</button>
             <button type="button" class="live-ping-top-btn is-primary" data-config-open>⚙ Pilih Device</button>
+            <?php endif; ?>
             <a href="../pages/device_manager.php">Device Manager</a>
         </div>
     </div>
 
-    <section class="noc-panel live-ping-panel" data-live-ping data-api="<?= lp_e($livePingApi) ?>" data-interval="10000" data-server-detail-base="server_detail.php" data-csrf="<?= lp_e($_SESSION['lp_csrf']) ?>">
+    <section class="noc-panel live-ping-panel <?= $isDownOnly ? 'is-down-only-panel' : '' ?>" data-live-ping data-down-only="<?= $isDownOnly ? '1' : '0' ?>" data-api="<?= lp_e($livePingApi) ?>" data-interval="10000" data-server-detail-base="server_detail.php" data-csrf="<?= lp_e($_SESSION['lp_csrf']) ?>">
         <div class="panel-heading live-ping-heading">
             <div class="live-ping-heading-left">
-                <h3><?= $isDownOnly ? 'DEVICE DOWN' : 'LIVE LATENCY' ?> <span>(10 SAAT)</span></h3>
-                <small><?= $isDownOnly ? 'Hanya device yang gagal ping akan dipaparkan di sini' : 'Graf sentiasa bergerak • klik kad Server untuk buka detail' ?></small>
+                <h3><?= $isDownOnly ? 'SENARAI DEVICE DOWN' : 'LIVE LATENCY' ?> <span>(10 SAAT)</span></h3>
+                <small><?= $isDownOnly ? 'Paparan ringkas untuk tindakan segera • refresh automatik setiap 10 saat' : 'Graf sentiasa bergerak • klik kad Server untuk buka detail' ?></small>
             </div>
             <div class="live-ping-run-state">
                 <div class="live-ping-running"><span></span><b data-live-state>Menunggu semakan</b></div>
@@ -121,6 +122,7 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
             </div>
         </div>
         <div class="live-ping-progress-track" aria-hidden="true"><span data-live-progress></span></div>
+        <?php if ($isDownOnly): ?><div class="live-ping-down-summary"><span class="down-dot"></span><b data-live-state>Menunggu semakan</b><small>Senarai ini hanya memaparkan device yang gagal ping.</small></div><?php endif; ?>
         <div class="live-ping-next-row"><span data-live-next>Semakan bermula...</span><span data-live-cycle>Cycle #0</span></div>
         <div class="live-ping-grid" data-live-ping-grid><div class="live-ping-empty">Sedang memuatkan graph ping...</div></div>
     </section>
@@ -152,7 +154,7 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
     <div class="live-ping-save-row"><span class="live-ping-msg">Graph menyimpan 60 sampel terakhir bagi setiap device.</span><button type="submit">Simpan Pilihan</button></div>
 </form>
 
-<script src="../assets/js/live-ping.js?v=20260622-compactdetail1"></script>
+<script src="../assets/js/live-ping.js?v=20260709-downview3"></script>
 <script>
 (function(){
   var body=document.body;
