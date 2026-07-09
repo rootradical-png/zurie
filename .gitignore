@@ -17,3 +17,4 @@ config/security_config.php
 config/server_metrics_config.php
 config/ubiquiti_ap_access.php
 config/vault_config.php
+map/data/status.json
