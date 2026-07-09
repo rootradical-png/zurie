@@ -1,5 +1,5 @@
 {
-    "generated_at": "2026-07-09T04:29:55+02:00",
+    "generated_at": "2026-07-09T05:04:48+02:00",
     "sync": {
         "enabled": true,
         "available": false,
@@ -44,168 +44,168 @@
         ],
         "changed_ip": [],
         "error": null,
-        "generated_at": "2026-07-09T04:29:52+02:00"
+        "generated_at": "2026-07-09T05:04:45+02:00"
     },
     "devices": {
         "ibnu": {
             "status": "offline",
             "latency_ms": null,
-            "checked_at": "2026-07-09T04:29:53+02:00"
+            "checked_at": "2026-07-09T05:04:46+02:00"
         },
         "dewan": {
             "status": "online",
-            "latency_ms": 3,
-            "checked_at": "2026-07-09T04:29:53+02:00"
+            "latency_ms": 2,
+            "checked_at": "2026-07-09T05:04:46+02:00"
         },
         "sains": {
             "status": "online",
-            "latency_ms": 3,
-            "checked_at": "2026-07-09T04:29:53+02:00"
+            "latency_ms": 4,
+            "checked_at": "2026-07-09T05:04:46+02:00"
         },
         "tut-a": {
             "status": "online",
-            "latency_ms": 40,
-            "checked_at": "2026-07-09T04:29:53+02:00"
+            "latency_ms": 2,
+            "checked_at": "2026-07-09T05:04:46+02:00"
         },
         "tut-b": {
             "status": "offline",
             "latency_ms": null,
-            "checked_at": "2026-07-09T04:29:53+02:00"
+            "checked_at": "2026-07-09T05:04:46+02:00"
         },
         "a3": {
             "status": "online",
             "latency_ms": 1,
-            "checked_at": "2026-07-09T04:29:53+02:00"
+            "checked_at": "2026-07-09T05:04:46+02:00"
         },
         "c1": {
             "status": "online",
             "latency_ms": 1,
-            "checked_at": "2026-07-09T04:29:53+02:00"
+            "checked_at": "2026-07-09T05:04:46+02:00"
         },
         "adm7": {
             "status": "offline",
             "latency_ms": null,
-            "checked_at": "2026-07-09T04:29:53+02:00"
+            "checked_at": "2026-07-09T05:04:46+02:00"
         },
         "adm8": {
             "status": "offline",
             "latency_ms": null,
-            "checked_at": "2026-07-09T04:29:53+02:00"
+            "checked_at": "2026-07-09T05:04:46+02:00"
         },
         "admin-sw": {
             "status": "online",
             "latency_ms": 1,
-            "checked_at": "2026-07-09T04:29:53+02:00"
+            "checked_at": "2026-07-09T05:04:46+02:00"
         },
         "hall-out": {
             "status": "online",
             "latency_ms": 3,
-            "checked_at": "2026-07-09T04:29:53+02:00"
+            "checked_at": "2026-07-09T05:04:46+02:00"
         },
         "hall-in": {
             "status": "online",
             "latency_ms": 3,
-            "checked_at": "2026-07-09T04:29:53+02:00"
+            "checked_at": "2026-07-09T05:04:46+02:00"
         },
         "lect-sw": {
             "status": "online",
             "latency_ms": 1,
-            "checked_at": "2026-07-09T04:29:53+02:00"
+            "checked_at": "2026-07-09T05:04:46+02:00"
         },
         "lib-ap": {
             "status": "offline",
             "latency_ms": null,
-            "checked_at": "2026-07-09T04:29:54+02:00"
+            "checked_at": "2026-07-09T05:04:47+02:00"
         },
         "lib-sw": {
             "status": "online",
             "latency_ms": 1,
-            "checked_at": "2026-07-09T04:29:54+02:00"
+            "checked_at": "2026-07-09T05:04:47+02:00"
         },
         "hostel": {
             "status": "offline",
             "latency_ms": null,
-            "checked_at": "2026-07-09T04:29:54+02:00"
+            "checked_at": "2026-07-09T05:04:47+02:00"
         },
         "mk5": {
             "status": "offline",
             "latency_ms": null,
-            "checked_at": "2026-07-09T04:29:54+02:00"
+            "checked_at": "2026-07-09T05:04:47+02:00"
         },
         "mk6": {
             "status": "online",
             "latency_ms": 1,
-            "checked_at": "2026-07-09T04:29:54+02:00"
+            "checked_at": "2026-07-09T05:04:47+02:00"
         },
         "mk7": {
             "status": "offline",
             "latency_ms": null,
-            "checked_at": "2026-07-09T04:29:54+02:00"
+            "checked_at": "2026-07-09T05:04:47+02:00"
         },
         "mk8": {
             "status": "online",
             "latency_ms": 3,
-            "checked_at": "2026-07-09T04:29:54+02:00"
+            "checked_at": "2026-07-09T05:04:47+02:00"
         },
         "mk9": {
             "status": "online",
             "latency_ms": 3,
-            "checked_at": "2026-07-09T04:29:54+02:00"
+            "checked_at": "2026-07-09T05:04:47+02:00"
         },
         "mk10": {
             "status": "online",
-            "latency_ms": 11,
-            "checked_at": "2026-07-09T04:29:54+02:00"
+            "latency_ms": 4,
+            "checked_at": "2026-07-09T05:04:47+02:00"
         },
         "web": {
             "status": "online",
             "latency_ms": 1,
-            "checked_at": "2026-07-09T04:29:54+02:00"
+            "checked_at": "2026-07-09T05:04:47+02:00"
         },
         "mis": {
             "status": "online",
             "latency_ms": 1,
-            "checked_at": "2026-07-09T04:29:54+02:00"
+            "checked_at": "2026-07-09T05:04:47+02:00"
         },
         "portal": {
             "status": "online",
             "latency_ms": 1,
-            "checked_at": "2026-07-09T04:29:54+02:00"
+            "checked_at": "2026-07-09T05:04:47+02:00"
         },
         "isims": {
             "status": "online",
             "latency_ms": 1,
-            "checked_at": "2026-07-09T04:29:54+02:00"
+            "checked_at": "2026-07-09T05:04:47+02:00"
         },
         "proxy": {
             "status": "offline",
             "latency_ms": null,
-            "checked_at": "2026-07-09T04:29:55+02:00"
+            "checked_at": "2026-07-09T05:04:48+02:00"
         },
         "dns": {
             "status": "offline",
             "latency_ms": null,
-            "checked_at": "2026-07-09T04:29:55+02:00"
+            "checked_at": "2026-07-09T05:04:48+02:00"
         },
         "router": {
             "status": "online",
-            "latency_ms": 1,
-            "checked_at": "2026-07-09T04:29:55+02:00"
+            "latency_ms": 2,
+            "checked_at": "2026-07-09T05:04:48+02:00"
         },
         "firewall": {
             "status": "online",
             "latency_ms": 1,
-            "checked_at": "2026-07-09T04:29:55+02:00"
+            "checked_at": "2026-07-09T05:04:48+02:00"
         },
         "wifi": {
             "status": "online",
             "latency_ms": 1,
-            "checked_at": "2026-07-09T04:29:55+02:00"
+            "checked_at": "2026-07-09T05:04:48+02:00"
         },
         "core": {
             "status": "online",
             "latency_ms": 1,
-            "checked_at": "2026-07-09T04:29:55+02:00"
+            "checked_at": "2026-07-09T05:04:48+02:00"
         }
     }
 }
