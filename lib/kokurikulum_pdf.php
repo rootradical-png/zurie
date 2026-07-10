@@ -282,9 +282,10 @@ final class KokurikulumCertificateRenderer
         $this->session = $session;
     }
 
-    private function addPage(): void
+    private function addPage(bool $withHeader=true): void
     {
         $this->pdf->addPage();
+        if(!$withHeader){ $this->y=15; return; }
         $this->y = 10;
         $logoKpm = ik_asset_file($this->config, 'logo_kpm');
         $logoKmp = ik_asset_file($this->config, 'logo_kmp');
@@ -299,7 +300,7 @@ final class KokurikulumCertificateRenderer
 
     private function ensure(float $height): void
     {
-        if ($this->y + $height > 267) $this->addPage();
+        if ($this->y + $height > 267) $this->addPage(false);
     }
 
     private function sectionTitle(string $title): void
