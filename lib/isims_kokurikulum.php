@@ -32,6 +32,8 @@ function ik_config(): array
     $feature = is_array($feature) ? $feature : [];
 
     $assetDefaults = [
+        // Guna URL penuh supaya tidak terbentuk /image/image/... apabila
+        // asset_base_urls sudah berakhir dengan /esasi/image/.
         'logo_kpm' => 'http://i-sims.kmp.matrik.edu.my/esasi/image/logokpm.png',
         'logo_kmp' => 'http://i-sims.kmp.matrik.edu.my/esasi/image/logokmp.jpg',
         'stamp_kmp' => 'http://i-sims.kmp.matrik.edu.my/esasi/image/coplogokmp.png',
@@ -55,6 +57,24 @@ function ik_config(): array
         'student_database_regex' => trim((string)($feature['student_database_regex'] ?? '~^(?:db_pelajarkmp|_pelajarkmp(?:20[0-9]{2})?)$~i')),
         // Backward compatibility untuk patch terdahulu.
         'database_include_regex' => trim((string)($feature['database_include_regex'] ?? '')),
+        // Senarai database legacy yang tetap dipaparkan walaupun SHOW DATABASES
+        // menyembunyikannya kerana privilege user belum lengkap.
+        'student_database_candidates' => array_values(array_unique(array_filter(array_map(
+            static fn($v): string => trim((string)$v),
+            (array)($feature['student_database_candidates'] ?? array_merge(
+                ['db_pelajarkmp', '_pelajarkmp'],
+                array_map(static fn(int $year): string => '_pelajarkmp' . $year, range(2013, (int)date('Y') + 1))
+            ))
+        )))),
+        // Paparkan semua database bukan sistem yang akaun aplikasi boleh capai.
+        // Tetapan false mengekalkan penapisan nama lama jika diperlukan.
+        'show_all_accessible_databases' => (bool)($feature['show_all_accessible_databases'] ?? true),
+        'student_photo_base_urls' => array_values(array_filter(array_map(
+            static fn($v): string => rtrim(trim((string)$v), '/') . '/',
+            (array)($feature['student_photo_base_urls'] ?? [
+                'http://i-sims.kmp.matrik.edu.my/esasi/image/',
+            ])
+        ))),
         'activity_database_candidates' => array_values(array_filter(array_map(
             static fn($v): string => trim((string)$v),
             (array)($feature['activity_database_candidates'] ?? ['db'])
@@ -62,7 +82,7 @@ function ik_config(): array
         'asset_base_urls' => array_values(array_filter(array_map(
             static fn($v): string => rtrim(trim((string)$v), '/') . '/',
             (array)($feature['asset_base_urls'] ?? [
-                'http://i-sims.kmp.matrik.edu.my/esasi/',
+                'http://i-sims.kmp.matrik.edu.my/esasi/image/',
                 'http://i-sims.kmp.matrik.edu.my/',
                 'http://www.kmp.matrik.edu.my/isims/',
             ])
@@ -159,10 +179,23 @@ function ik_database_year(string $database): int
 /** @return string[] */
 function ik_list_databases(PDO $pdo, array $config): array
 {
-    $result = array_values(array_filter(
-        ik_list_accessible_databases($pdo, $config),
-        static fn(string $db): bool => ik_is_student_database($db, $config)
-    ));
+    $accessible = ik_list_accessible_databases($pdo, $config);
+    $candidates = array_values(array_filter(array_map(
+        static fn($v): string => trim((string)$v),
+        (array)($config['student_database_candidates'] ?? [])
+    )));
+
+    // Gabungkan database yang benar-benar kelihatan dengan semua nama database
+    // legacy yang dijangka. Ini memastikan dropdown tidak tinggal dua pilihan sahaja.
+    $result = !empty($config['show_all_accessible_databases'])
+        ? array_values(array_unique(array_merge($candidates, $accessible)))
+        : array_values(array_unique(array_merge(
+            $candidates,
+            array_values(array_filter(
+                $accessible,
+                static fn(string $db): bool => ik_is_student_database($db, $config)
+            ))
+        )));
 
     usort($result, static function (string $a, string $b): int {
         $aCurrent = strcasecmp($a, 'db_pelajarkmp') === 0 ? 0 : (strcasecmp($a, '_pelajarkmp') === 0 ? 1 : 2);
@@ -529,6 +562,26 @@ function ik_infer_session(string $database, string $default = ''): string
     return $default !== '' ? $default : date('Y') . '/' . ((int)date('Y') + 1);
 }
 
+/** @return string[] */
+function ik_session_options(string $selectedDatabase = '', string $selectedSession = ''): array
+{
+    $currentYear = (int)date('Y');
+    $startYear = 2013;
+    if (preg_match('/(20\d{2})/', $selectedDatabase, $m)) {
+        $dbYear = (int)$m[1];
+        $startYear = min($startYear, $dbYear - 1);
+    }
+
+    $sessions = [];
+    for ($year = $currentYear + 1; $year >= $startYear; $year--) {
+        $sessions[] = $year . '/' . ($year + 1);
+    }
+    if ($selectedSession !== '' && !in_array($selectedSession, $sessions, true)) {
+        array_unshift($sessions, $selectedSession);
+    }
+    return array_values(array_unique($sessions));
+}
+
 function ik_program_label(string $program): string
 {
     $program = strtoupper(trim($program));
@@ -550,6 +603,80 @@ function ik_serial_number(array $student): string
         . (strlen($matrik) >= 4 ? substr($matrik, 2, 2) : '')
         . (strlen($matrik) >= 12 ? substr($matrik, 8, 4) : substr($matrik, -4))
         . (strlen($ic) >= 12 ? substr($ic, 8, 4) : substr($ic, -4));
+}
+
+
+function ik_student_photo_cache_dir(): string
+{
+    return dirname(__DIR__) . '/data/kokurikulum_student_photos';
+}
+
+/**
+ * Cari gambar pelajar pada direktori eSASI menggunakan beberapa variasi nama fail.
+ * Gambar disimpan dalam cache tempatan supaya preview dan PDF lebih stabil.
+ */
+function ik_student_photo_file(array $config, array $student): ?string
+{
+    $matrik = preg_replace('/[^A-Za-z0-9_-]/', '', (string)($student['matrik'] ?? '')) ?? '';
+    $nokp = preg_replace('/\D+/', '', (string)($student['nokp'] ?? '')) ?? '';
+    if ($matrik === '' && $nokp === '') return null;
+
+    $cacheDir = ik_student_photo_cache_dir();
+    if (!is_dir($cacheDir) && !@mkdir($cacheDir, 0755, true) && !is_dir($cacheDir)) return null;
+
+    $cacheKey = strtolower($matrik !== '' ? $matrik : $nokp);
+    foreach (['jpg', 'jpeg', 'png'] as $ext) {
+        $cached = $cacheDir . '/' . $cacheKey . '.' . $ext;
+        if (is_file($cached) && filesize($cached) > 100) return $cached;
+    }
+
+    $names = [];
+    foreach (array_filter([$matrik, strtoupper($matrik), strtolower($matrik), $nokp]) as $name) {
+        foreach (['jpg', 'JPG', 'jpeg', 'JPEG', 'png', 'PNG'] as $ext) {
+            $names[] = $name . '.' . $ext;
+        }
+    }
+    $names = array_values(array_unique($names));
+
+    foreach ((array)($config['student_photo_base_urls'] ?? []) as $base) {
+        foreach ($names as $name) {
+            $url = rtrim((string)$base, '/') . '/' . rawurlencode($name);
+            $data = false;
+            $contentType = '';
+            if (function_exists('curl_init')) {
+                $ch = curl_init($url);
+                curl_setopt_array($ch, [
+                    CURLOPT_RETURNTRANSFER => true, CURLOPT_FOLLOWLOCATION => true,
+                    CURLOPT_CONNECTTIMEOUT => 4, CURLOPT_TIMEOUT => 10,
+                    CURLOPT_SSL_VERIFYPEER => false, CURLOPT_SSL_VERIFYHOST => false,
+                    CURLOPT_USERAGENT => 'Zurie-Kokurikulum/2.0',
+                ]);
+                $data = curl_exec($ch);
+                $code = (int)curl_getinfo($ch, CURLINFO_RESPONSE_CODE);
+                $contentType = (string)curl_getinfo($ch, CURLINFO_CONTENT_TYPE);
+                curl_close($ch);
+                if ($code < 200 || $code >= 400) $data = false;
+            } elseif (filter_var(ini_get('allow_url_fopen'), FILTER_VALIDATE_BOOLEAN)) {
+                $ctx = stream_context_create(['http' => ['timeout' => 10, 'user_agent' => 'Zurie-Kokurikulum/2.0']]);
+                $data = @file_get_contents($url, false, $ctx);
+            }
+            if (!is_string($data) || strlen($data) < 100) continue;
+
+            $tmp = $cacheDir . '/tmp-' . bin2hex(random_bytes(5));
+            if (@file_put_contents($tmp, $data, LOCK_EX) === false) continue;
+            $info = @getimagesize($tmp);
+            if (!$info || !in_array((int)$info[2], [IMAGETYPE_JPEG, IMAGETYPE_PNG], true)) {
+                @unlink($tmp);
+                continue;
+            }
+            $ext = (int)$info[2] === IMAGETYPE_PNG ? 'png' : 'jpg';
+            $target = $cacheDir . '/' . $cacheKey . '.' . $ext;
+            @rename($tmp, $target);
+            @chmod($target, 0644);
+            return is_file($target) ? $target : null;
+        }
+    }
+    return null;
 }
 
 function ik_asset_cache_dir(): string
@@ -578,7 +705,13 @@ function ik_asset_file(array $config, string $key): ?string
         $urls[] = $relative;
     } else {
         foreach ((array)$config['asset_base_urls'] as $base) {
-            $urls[] = rtrim((string)$base, '/') . '/' . ltrim($relative, '/');
+            $base = rtrim((string)$base, '/');
+            $path = ltrim($relative, '/');
+            // Elak URL salah seperti /esasi/image/image/logokmp.jpg.
+            if (preg_match('#/image$#i', $base) && str_starts_with(strtolower($path), 'image/')) {
+                $path = substr($path, 6);
+            }
+            $urls[] = $base . '/' . $path;
         }
     }
 

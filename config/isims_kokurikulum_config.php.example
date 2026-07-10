@@ -7,6 +7,18 @@ return [
     // Dropdown dijana terus daripada server. Tahun baharu seperti
     // _pelajarkmp2026 / _pelajarkmp2027 akan muncul automatik.
     'student_database_regex' => '~^(?:db_pelajarkmp|_pelajarkmp(?:20[0-9]{2})?)$~i',
+    'show_all_accessible_databases' => true,
+
+    // Nama database yang tetap dipaparkan dalam dropdown.
+    'student_database_candidates' => array_merge(
+        ['db_pelajarkmp', '_pelajarkmp'],
+        array_map(static fn(int $year): string => '_pelajarkmp' . $year, range(2013, (int)date('Y') + 1))
+    ),
+
+    // Gambar pelajar dicari menggunakan No. Matrik (JPG/JPEG/PNG).
+    'student_photo_base_urls' => [
+        'http://i-sims.kmp.matrik.edu.my/esasi/image/',
+    ],
 
     // Database yang patut diperiksa dahulu untuk table aktiviti + sennamaakt.
     // Berdasarkan struktur lama, database "db" biasanya menyimpan rekod ini.
@@ -15,6 +27,7 @@ return [
 
     // Sistem akan cuba URL mengikut turutan sehingga imej ditemui.
     'asset_base_urls' => [
+        'http://i-sims.kmp.matrik.edu.my/esasi/image/',
         'http://i-sims.kmp.matrik.edu.my/',
         'http://www.kmp.matrik.edu.my/isims/',
     ],

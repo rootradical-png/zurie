@@ -25,6 +25,7 @@ $selectedDb = trim((string)($_GET['db'] ?? ''));
 $query = ik_clean_query((string)($_GET['q'] ?? ''));
 $selectedMatrik = strtoupper(trim((string)($_GET['matrik'] ?? '')));
 $sessionValue = trim((string)($_GET['session'] ?? ''));
+$sessionOptions = [];
 
 try {
     $pdo = ik_connect($config);
@@ -38,6 +39,7 @@ try {
     if ($sessionValue === '' && $selectedDb !== '') {
         $sessionValue = ik_infer_session($selectedDb, (string)$config['default_session']);
     }
+    $sessionOptions = ik_session_options($selectedDb, $sessionValue);
 
     if ($selectedDb !== '' && $query !== '') {
         $students = ik_search_students($pdo, $selectedDb, $query, 50);
@@ -108,7 +110,12 @@ function koku_query(array $changes = []): string
 <form method="get" class="toolbar">
 <div class="field"><label>Database i-SIMS lama</label><select name="db" required onchange="this.form.submit()"><option value="">— Pilih database —</option><?php foreach ($databases as $db): ?><option value="<?= ik_h($db) ?>" <?= $db === $selectedDb ? 'selected' : '' ?>><?= ik_h(ik_database_label($db)) ?></option><?php endforeach; ?></select></div>
 <div class="field"><label>No. Matrik atau No. KP</label><input type="text" name="q" value="<?= ik_h($query) ?>" placeholder="Contoh: MA2614110409 atau 071028100344" autocomplete="off"></div>
-<div class="field"><label>Sesi pada sijil</label><input type="text" name="session" value="<?= ik_h($sessionValue) ?>" placeholder="2025/2026"></div>
+<div class="field"><label>Sesi pada sijil</label><select name="session">
+<option value="">— Pilih sesi —</option>
+<?php foreach ($sessionOptions as $session): ?>
+<option value="<?= ik_h($session) ?>" <?= $session === $sessionValue ? 'selected' : '' ?>><?= ik_h($session) ?></option>
+<?php endforeach; ?>
+</select></div>
 <div><button class="btn" type="submit">Cari Pelajar</button></div>
 </form>
 <p class="muted" style="margin-bottom:0">Dropdown dibina terus daripada server i-SIMS menggunakan <code>SHOW DATABASES</code> dan memaparkan semua database bukan sistem yang boleh dicapai oleh akaun aplikasi. Database yang tiada jadual pelajar akan memaparkan ralat struktur apabila dipilih. Data dibaca terus; tiada salinan disimpan dalam Zurie.</p>
