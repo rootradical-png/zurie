@@ -358,6 +358,8 @@ final class KokurikulumCertificateRenderer
         $this->y += 12;
 
         $program = ik_program_label((string)($this->student['program'] ?? ''));
+        $studentPhoto = ik_student_photo_file($this->config, $this->student);
+        if ($studentPhoto) $this->pdf->image($studentPhoto, 172, $this->y, 25, 34);
         $infoRows = [
             ['NAMA', (string)$this->student['nama'], '', ''],
             ['NO. KP', (string)$this->student['nokp'], 'NO. MATRIK', (string)$this->student['matrik']],
@@ -366,7 +368,7 @@ final class KokurikulumCertificateRenderer
         ];
         foreach ($infoRows as $row) {
             $this->pdf->text(10, $this->y + 5, $row[0], 10, true);
-            $this->pdf->text(30, $this->y + 5, ': ' . $row[1], 10, false);
+            $this->pdf->text(30, $this->y + 5, ': ' . $row[1], 10, false, 'L', 76);
             if ($row[2] !== '') {
                 $this->pdf->text(110, $this->y + 5, $row[2], 10, true);
                 $this->pdf->text(135, $this->y + 5, ': ' . $row[3], 10, false);
