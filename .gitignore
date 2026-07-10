@@ -23,11 +23,7 @@ backup/
 # Dependencies
 vendor/
 node_modules/
-# SFTP photo version runtime cache
-/data/photo_version_cache/
-/data/photo_versions_work/
 
-# SFTP photo archive: keep protection file, ignore archived student images/logs
-/archive/sftp_photos/*
-!/archive/sftp_photos/.htaccess
-!/archive/sftp_photos/README.txt
+# Cached images pulled from legacy i-SIMS
+data/kokurikulum_assets/*
+!data/kokurikulum_assets/.htaccess

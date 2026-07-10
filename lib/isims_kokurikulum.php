@@ -1,0 +1,556 @@
+<?php
+/**
+ * Shared helpers for i-SIMS legacy Kokurikulum certificate lookup.
+ * Uses the existing secure i-SIMS MySQL credential file and never stores
+ * database passwords inside the web root/repository.
+ */
+declare(strict_types=1);
+
+function ik_h(mixed $value): string
+{
+    return htmlspecialchars((string)$value, ENT_QUOTES, 'UTF-8');
+}
+
+function ik_secure_config_path(): string
+{
+    return 'C:/xampp_baru/secure/isims_mysql_config.php';
+}
+
+function ik_feature_config_path(): string
+{
+    return dirname(__DIR__) . '/config/isims_kokurikulum_config.php';
+}
+
+function ik_config(): array
+{
+    $basePath = ik_secure_config_path();
+    $base = is_file($basePath) ? require $basePath : [];
+    $base = is_array($base) ? $base : [];
+
+    $featurePath = ik_feature_config_path();
+    $feature = is_file($featurePath) ? require $featurePath : [];
+    $feature = is_array($feature) ? $feature : [];
+
+    $assetDefaults = [
+        'logo_kpm' => 'image/logokpm.png',
+        'logo_kmp' => 'image/logokmp.jpg',
+        'stamp_kmp' => 'image/coplogokmp.png',
+        'director_signature' => 'image/signpeng.png',
+    ];
+
+    return [
+        'enabled' => (bool)($base['enabled'] ?? false),
+        'host' => trim((string)($base['host'] ?? '')),
+        'port' => (int)($base['port'] ?? 3306),
+        'user' => trim((string)($base['user'] ?? $base['username'] ?? '')),
+        'password' => (string)($base['password'] ?? ''),
+        'charset' => trim((string)($base['charset'] ?? 'utf8')) ?: 'utf8',
+        'timeout' => max(2, min(30, (int)($base['timeout'] ?? 8))),
+        'database_exclude' => array_values(array_unique(array_merge(
+            ['information_schema', 'mysql', 'performance_schema', 'sys'],
+            array_map('strval', (array)($feature['database_exclude'] ?? []))
+        ))),
+        'database_include_regex' => trim((string)($feature['database_include_regex'] ?? '')),
+        'asset_base_urls' => array_values(array_filter(array_map(
+            static fn($v): string => rtrim(trim((string)$v), '/') . '/',
+            (array)($feature['asset_base_urls'] ?? [
+                'http://i-sims.kmp.matrik.edu.my/',
+                'http://www.kmp.matrik.edu.my/isims/',
+            ])
+        ))),
+        'assets' => array_replace($assetDefaults, (array)($feature['assets'] ?? [])),
+        'director_name' => trim((string)($feature['director_name'] ?? 'KHAIRINA BINTI SUBARI')),
+        'college_name' => trim((string)($feature['college_name'] ?? 'KOLEJ MATRIKULASI PERLIS')),
+        'ministry_name' => trim((string)($feature['ministry_name'] ?? 'KEMENTERIAN PENDIDIKAN')),
+        'college_address' => trim((string)($feature['college_address'] ?? '02600 ARAU, PERLIS')),
+        'default_session' => trim((string)($feature['default_session'] ?? '')),
+        'config_path' => $basePath,
+        'feature_config_path' => $featurePath,
+    ];
+}
+
+function ik_config_ready(array $config): bool
+{
+    return !empty($config['enabled'])
+        && trim((string)$config['host']) !== ''
+        && trim((string)$config['user']) !== '';
+}
+
+function ik_connect(array $config): PDO
+{
+    if (!ik_config_ready($config)) {
+        throw new RuntimeException('Konfigurasi i-SIMS belum lengkap. Semak C:\\xampp_baru\\secure\\isims_mysql_config.php.');
+    }
+    if (!class_exists('PDO') || !in_array('mysql', PDO::getAvailableDrivers(), true)) {
+        throw new RuntimeException('PDO MySQL belum aktif dalam PHP.');
+    }
+
+    $dsn = sprintf(
+        'mysql:host=%s;port=%d;charset=%s',
+        $config['host'],
+        (int)$config['port'],
+        $config['charset']
+    );
+
+    return new PDO($dsn, $config['user'], $config['password'], [
+        PDO::ATTR_ERRMODE => PDO::ERRMODE_EXCEPTION,
+        PDO::ATTR_DEFAULT_FETCH_MODE => PDO::FETCH_ASSOC,
+        PDO::ATTR_EMULATE_PREPARES => false,
+        PDO::ATTR_TIMEOUT => (int)$config['timeout'],
+    ]);
+}
+
+function ik_quote_identifier(string $value): string
+{
+    if ($value === '' || str_contains($value, "\0")) {
+        throw new RuntimeException('Nama database/table tidak sah.');
+    }
+    return '`' . str_replace('`', '``', $value) . '`';
+}
+
+/** @return string[] */
+function ik_list_databases(PDO $pdo, array $config): array
+{
+    $exclude = array_map('strtolower', (array)$config['database_exclude']);
+    $regex = (string)$config['database_include_regex'];
+    $result = [];
+
+    foreach ($pdo->query('SHOW DATABASES')->fetchAll(PDO::FETCH_COLUMN) as $db) {
+        $db = trim((string)$db);
+        if ($db === '' || in_array(strtolower($db), $exclude, true)) {
+            continue;
+        }
+        if ($regex !== '' && @preg_match($regex, '') !== false && !preg_match($regex, $db)) {
+            continue;
+        }
+        $result[] = $db;
+    }
+
+    natcasesort($result);
+    return array_values($result);
+}
+
+/** @return array<string,string> lower-case => actual */
+function ik_tables(PDO $pdo, string $database): array
+{
+    $stmt = $pdo->prepare('SELECT TABLE_NAME FROM information_schema.TABLES WHERE TABLE_SCHEMA = ?');
+    $stmt->execute([$database]);
+    $tables = [];
+    foreach ($stmt->fetchAll(PDO::FETCH_COLUMN) as $name) {
+        $name = (string)$name;
+        $tables[strtolower($name)] = $name;
+    }
+    return $tables;
+}
+
+/** @return array<string,string> lower-case => actual */
+function ik_columns(PDO $pdo, string $database, string $table): array
+{
+    $stmt = $pdo->prepare('SELECT COLUMN_NAME FROM information_schema.COLUMNS WHERE TABLE_SCHEMA = ? AND TABLE_NAME = ? ORDER BY ORDINAL_POSITION');
+    $stmt->execute([$database, $table]);
+    $columns = [];
+    foreach ($stmt->fetchAll(PDO::FETCH_COLUMN) as $name) {
+        $name = (string)$name;
+        $columns[strtolower($name)] = $name;
+    }
+    return $columns;
+}
+
+function ik_pick_column(array $columns, array $aliases, bool $required = false, string $label = ''): ?string
+{
+    foreach ($aliases as $alias) {
+        $key = strtolower((string)$alias);
+        if (isset($columns[$key])) {
+            return (string)$columns[$key];
+        }
+    }
+    if ($required) {
+        throw new RuntimeException('Column ' . ($label !== '' ? $label : implode('/', $aliases)) . ' tidak ditemui.');
+    }
+    return null;
+}
+
+function ik_clean_query(string $value): string
+{
+    return trim(preg_replace('/\s+/u', ' ', $value) ?? $value);
+}
+
+function ik_normalize_utf8(mixed $value): string
+{
+    $text = trim((string)$value);
+    if ($text === '') {
+        return '';
+    }
+    if (function_exists('mb_check_encoding') && mb_check_encoding($text, 'UTF-8')) {
+        return $text;
+    }
+    if (function_exists('iconv')) {
+        foreach (['Windows-1252', 'ISO-8859-1'] as $source) {
+            $converted = @iconv($source, 'UTF-8//IGNORE', $text);
+            if ($converted !== false && $converted !== '') {
+                return $converted;
+            }
+        }
+    }
+    return $text;
+}
+
+/**
+ * @return array{table:string,columns:array<string,?string>}
+ */
+function ik_student_schema(PDO $pdo, string $database): array
+{
+    $tables = ik_tables($pdo, $database);
+    if (!isset($tables['senarai'])) {
+        throw new RuntimeException('Database ' . $database . ' tidak mempunyai table senarai.');
+    }
+    $table = $tables['senarai'];
+    $columns = ik_columns($pdo, $database, $table);
+
+    return [
+        'table' => $table,
+        'columns' => [
+            'matrik' => ik_pick_column($columns, ['matrik', 'nomatrik', 'no_matrik'], true, 'matrik'),
+            'nokp' => ik_pick_column($columns, ['nokp', 'no_kp', 'noic', 'ic', 'kadpengenalan'], true, 'no. KP'),
+            'nama' => ik_pick_column($columns, ['nama', 'name', 'namapelajar'], true, 'nama'),
+            'jurusan' => ik_pick_column($columns, ['jurusan', 'kursus', 'course']),
+            'kuliah' => ik_pick_column($columns, ['kuliah', 'kelas', 'lecture']),
+            'program' => ik_pick_column($columns, ['program', 'sistem', 'program_pengajian']),
+        ],
+    ];
+}
+
+/** @return array<int,array<string,string>> */
+function ik_search_students(PDO $pdo, string $database, string $query, int $limit = 50): array
+{
+    $schema = ik_student_schema($pdo, $database);
+    $c = $schema['columns'];
+    $q = ik_clean_query($query);
+    if ($q === '') {
+        return [];
+    }
+
+    $db = ik_quote_identifier($database);
+    $table = ik_quote_identifier($schema['table']);
+    $select = [
+        ik_quote_identifier((string)$c['matrik']) . ' AS matrik',
+        ik_quote_identifier((string)$c['nokp']) . ' AS nokp',
+        ik_quote_identifier((string)$c['nama']) . ' AS nama',
+        $c['jurusan'] ? ik_quote_identifier((string)$c['jurusan']) . ' AS jurusan' : "'' AS jurusan",
+        $c['kuliah'] ? ik_quote_identifier((string)$c['kuliah']) . ' AS kuliah' : "'' AS kuliah",
+        $c['program'] ? ik_quote_identifier((string)$c['program']) . ' AS program' : "'' AS program",
+    ];
+
+    $matrikCol = ik_quote_identifier((string)$c['matrik']);
+    $nokpCol = ik_quote_identifier((string)$c['nokp']);
+    $digits = preg_replace('/\D+/', '', $q) ?? '';
+    $sql = 'SELECT ' . implode(', ', $select) . " FROM {$db}.{$table} WHERE "
+        . "UPPER(TRIM({$matrikCol})) = UPPER(:exact) OR REPLACE(REPLACE(TRIM({$nokpCol}),'-',''),' ','') = :digits "
+        . "OR UPPER(TRIM({$matrikCol})) LIKE UPPER(:prefix) OR REPLACE(REPLACE(TRIM({$nokpCol}),'-',''),' ','') LIKE :digitprefix "
+        . "ORDER BY CASE WHEN UPPER(TRIM({$matrikCol})) = UPPER(:exact2) THEN 0 WHEN REPLACE(REPLACE(TRIM({$nokpCol}),'-',''),' ','') = :digits2 THEN 1 ELSE 2 END, {$matrikCol} LIMIT " . max(1, min(100, $limit));
+
+    $stmt = $pdo->prepare($sql);
+    $stmt->execute([
+        ':exact' => $q,
+        ':digits' => $digits,
+        ':prefix' => $q . '%',
+        ':digitprefix' => $digits . '%',
+        ':exact2' => $q,
+        ':digits2' => $digits,
+    ]);
+
+    $rows = [];
+    foreach ($stmt->fetchAll() as $row) {
+        $rows[] = [
+            'matrik' => strtoupper(ik_normalize_utf8($row['matrik'] ?? '')),
+            'nokp' => ik_normalize_utf8($row['nokp'] ?? ''),
+            'nama' => ik_normalize_utf8($row['nama'] ?? ''),
+            'jurusan' => ik_normalize_utf8($row['jurusan'] ?? ''),
+            'kuliah' => ik_normalize_utf8($row['kuliah'] ?? ''),
+            'program' => ik_normalize_utf8($row['program'] ?? ''),
+        ];
+    }
+    return $rows;
+}
+
+function ik_get_student(PDO $pdo, string $database, string $matrik): array
+{
+    $schema = ik_student_schema($pdo, $database);
+    $c = $schema['columns'];
+    $db = ik_quote_identifier($database);
+    $table = ik_quote_identifier($schema['table']);
+    $matrikCol = ik_quote_identifier((string)$c['matrik']);
+    $select = [
+        $matrikCol . ' AS matrik',
+        ik_quote_identifier((string)$c['nokp']) . ' AS nokp',
+        ik_quote_identifier((string)$c['nama']) . ' AS nama',
+        $c['jurusan'] ? ik_quote_identifier((string)$c['jurusan']) . ' AS jurusan' : "'' AS jurusan",
+        $c['kuliah'] ? ik_quote_identifier((string)$c['kuliah']) . ' AS kuliah' : "'' AS kuliah",
+        $c['program'] ? ik_quote_identifier((string)$c['program']) . ' AS program' : "'' AS program",
+    ];
+    $stmt = $pdo->prepare('SELECT ' . implode(', ', $select) . " FROM {$db}.{$table} WHERE UPPER(TRIM({$matrikCol})) = UPPER(?) LIMIT 1");
+    $stmt->execute([$matrik]);
+    $row = $stmt->fetch();
+    if (!$row) {
+        throw new RuntimeException('Pelajar tidak ditemui dalam database ' . $database . '.');
+    }
+    return [
+        'matrik' => strtoupper(ik_normalize_utf8($row['matrik'] ?? '')),
+        'nokp' => ik_normalize_utf8($row['nokp'] ?? ''),
+        'nama' => ik_normalize_utf8($row['nama'] ?? ''),
+        'jurusan' => ik_normalize_utf8($row['jurusan'] ?? ''),
+        'kuliah' => ik_normalize_utf8($row['kuliah'] ?? ''),
+        'program' => ik_normalize_utf8($row['program'] ?? ''),
+    ];
+}
+
+function ik_activity_schema(PDO $pdo, string $database): ?array
+{
+    $tables = ik_tables($pdo, $database);
+    if (!isset($tables['aktiviti'], $tables['sennamaakt'])) {
+        return null;
+    }
+    $activityTable = $tables['aktiviti'];
+    $nameTable = $tables['sennamaakt'];
+    $a = ik_columns($pdo, $database, $activityTable);
+    $s = ik_columns($pdo, $database, $nameTable);
+
+    try {
+        return [
+            'database' => $database,
+            'activity_table' => $activityTable,
+            'name_table' => $nameTable,
+            'a' => [
+                'id' => ik_pick_column($a, ['codeid', 'id', 'kodaktiviti'], true, 'aktiviti.codeID'),
+                'name' => ik_pick_column($a, ['namaakt', 'nama_aktiviti', 'nama'], true, 'aktiviti.namaAkt'),
+                'type' => ik_pick_column($a, ['jenis', 'kategori'], true, 'aktiviti.jenis'),
+                'level' => ik_pick_column($a, ['peringkat', 'level'], true, 'aktiviti.peringkat'),
+                'date' => ik_pick_column($a, ['tarm', 'tarikh', 'tarikh_mula']),
+                'section' => ik_pick_column($a, ['section', 'seksyen'], true, 'aktiviti.section'),
+                'level_code' => ik_pick_column($a, ['kod_peringkat', 'kodperingkat']),
+            ],
+            's' => [
+                'activity_id' => ik_pick_column($s, ['codeidakt', 'aktiviti_id', 'codeid'], true, 'sennamaakt.codeIDAkt'),
+                'matrik' => ik_pick_column($s, ['nomatrik', 'matrik', 'no_matrik'], true, 'sennamaakt.noMatrik'),
+                'position' => ik_pick_column($s, ['jawatan', 'position']),
+                'achievement' => ik_pick_column($s, ['pencapaian', 'achievement']),
+            ],
+        ];
+    } catch (Throwable) {
+        return null;
+    }
+}
+
+function ik_activity_database(PDO $pdo, array $databases, string $selectedDatabase, string $matrik): ?array
+{
+    $ordered = array_values(array_unique(array_merge([$selectedDatabase], $databases)));
+    $selectedFallback = null;
+    foreach ($ordered as $database) {
+        $schema = ik_activity_schema($pdo, $database);
+        if (!$schema) {
+            continue;
+        }
+        if ($database === $selectedDatabase) {
+            $selectedFallback = $schema;
+        }
+        $db = ik_quote_identifier($database);
+        $table = ik_quote_identifier((string)$schema['name_table']);
+        $matrikCol = ik_quote_identifier((string)$schema['s']['matrik']);
+        try {
+            $stmt = $pdo->prepare("SELECT 1 FROM {$db}.{$table} WHERE UPPER(TRIM({$matrikCol})) = UPPER(?) LIMIT 1");
+            $stmt->execute([$matrik]);
+            if ($stmt->fetchColumn() !== false) {
+                return $schema;
+            }
+        } catch (Throwable) {
+            continue;
+        }
+    }
+    return $selectedFallback;
+}
+
+/** @return array{section1:array,section2:array,section3:array,activity_database:string} */
+function ik_get_activities(PDO $pdo, array $databases, string $selectedDatabase, string $matrik): array
+{
+    $schema = ik_activity_database($pdo, $databases, $selectedDatabase, $matrik);
+    if (!$schema) {
+        return ['section1' => [], 'section2' => [], 'section3' => [], 'activity_database' => ''];
+    }
+
+    $db = ik_quote_identifier((string)$schema['database']);
+    $aTable = ik_quote_identifier((string)$schema['activity_table']);
+    $sTable = ik_quote_identifier((string)$schema['name_table']);
+    $a = $schema['a'];
+    $s = $schema['s'];
+
+    $field = static fn(string $alias, ?string $column, string $fallback = "''"): string => $column ? ($alias . '.' . ik_quote_identifier($column)) : $fallback;
+    $order = [];
+    if ($a['level_code']) $order[] = $field('a', $a['level_code']);
+    if ($s['position']) $order[] = $field('s', $s['position']) . ' DESC';
+    if ($s['achievement']) $order[] = $field('s', $s['achievement']);
+
+    $sql = 'SELECT '
+        . $field('a', $a['name']) . ' AS namaAkt, '
+        . $field('a', $a['type']) . ' AS jenis, '
+        . $field('a', $a['level']) . ' AS peringkat, '
+        . $field('a', $a['date']) . ' AS tarM, '
+        . $field('a', $a['section'], '0') . ' AS section, '
+        . $field('s', $s['position']) . ' AS jawatan, '
+        . $field('s', $s['achievement']) . ' AS pencapaian '
+        . "FROM {$db}.{$aTable} a INNER JOIN {$db}.{$sTable} s ON "
+        . $field('a', $a['id']) . ' = ' . $field('s', $s['activity_id'])
+        . ' WHERE UPPER(TRIM(' . $field('s', $s['matrik']) . ')) = UPPER(?)'
+        . ($order ? (' ORDER BY ' . implode(', ', $order)) : '');
+
+    $stmt = $pdo->prepare($sql);
+    $stmt->execute([$matrik]);
+
+    $section1 = [];
+    $section2 = [];
+    $section3 = [];
+    foreach ($stmt->fetchAll() as $row) {
+        $section = (int)($row['section'] ?? 0);
+        $jawatan = ik_normalize_utf8($row['jawatan'] ?? '');
+        $pencapaian = ik_normalize_utf8($row['pencapaian'] ?? '');
+        if ($jawatan === '1') $jawatan = '-';
+        if ($pencapaian === '1') $pencapaian = '-';
+        $date = ik_normalize_utf8($row['tarM'] ?? '');
+        $year = preg_match('/^(\d{4})/', $date, $m) ? $m[1] : '';
+
+        if ($section === 1 && count($section1) < 12) {
+            $section1[] = [
+                ik_normalize_utf8($row['namaAkt'] ?? ''),
+                ik_normalize_utf8($row['jenis'] ?? ''),
+                ik_normalize_utf8($row['peringkat'] ?? ''),
+                $jawatan !== '' ? $jawatan : '-',
+                $pencapaian !== '' ? $pencapaian : '-',
+            ];
+        } elseif ($section === 2 && count($section2) < 8) {
+            $section2[] = [
+                trim(ik_normalize_utf8($row['jenis'] ?? '') . ' ' . ik_normalize_utf8($row['namaAkt'] ?? '')),
+                ik_normalize_utf8($row['peringkat'] ?? ''),
+                $year,
+            ];
+        } elseif ($section === 3 && count($section3) < 2) {
+            $section3[] = [
+                ik_normalize_utf8($row['namaAkt'] ?? ''),
+                ik_normalize_utf8($row['peringkat'] ?? ''),
+                $year,
+            ];
+        }
+    }
+
+    return [
+        'section1' => $section1,
+        'section2' => $section2,
+        'section3' => $section3,
+        'activity_database' => (string)$schema['database'],
+    ];
+}
+
+function ik_infer_session(string $database, string $default = ''): string
+{
+    if (preg_match('/(20\d{2})[^0-9]?(20\d{2})/', $database, $m)) {
+        return $m[1] . '/' . $m[2];
+    }
+    if (preg_match('/(20\d{2})/', $database, $m)) {
+        $year = (int)$m[1];
+        return $year . '/' . ($year + 1);
+    }
+    return $default !== '' ? $default : date('Y') . '/' . ((int)date('Y') + 1);
+}
+
+function ik_program_label(string $program): string
+{
+    $program = strtoupper(trim($program));
+    if ($program === 'PDT' || str_contains($program, 'EMPAT')) {
+        return 'SISTEM EMPAT SEMESTER (SES)';
+    }
+    if ($program === 'PST' || $program === '' || str_contains($program, 'DUA')) {
+        return 'SISTEM DUA SEMESTER (SDS)';
+    }
+    return $program;
+}
+
+function ik_serial_number(array $student): string
+{
+    $matrik = preg_replace('/\s+/', '', (string)($student['matrik'] ?? '')) ?? '';
+    $ic = preg_replace('/\D+/', '', (string)($student['nokp'] ?? '')) ?? '';
+    $kuliah = trim((string)($student['kuliah'] ?? ''));
+    return $kuliah
+        . (strlen($matrik) >= 4 ? substr($matrik, 2, 2) : '')
+        . (strlen($matrik) >= 12 ? substr($matrik, 8, 4) : substr($matrik, -4))
+        . (strlen($ic) >= 12 ? substr($ic, 8, 4) : substr($ic, -4));
+}
+
+function ik_asset_cache_dir(): string
+{
+    return dirname(__DIR__) . '/data/kokurikulum_assets';
+}
+
+function ik_asset_file(array $config, string $key): ?string
+{
+    $relative = trim((string)($config['assets'][$key] ?? ''));
+    if ($relative === '') return null;
+
+    $cacheDir = ik_asset_cache_dir();
+    if (!is_dir($cacheDir) && !@mkdir($cacheDir, 0755, true) && !is_dir($cacheDir)) {
+        return null;
+    }
+    $extension = strtolower((string)pathinfo(parse_url($relative, PHP_URL_PATH) ?: $relative, PATHINFO_EXTENSION));
+    if (!in_array($extension, ['jpg', 'jpeg', 'png'], true)) $extension = 'img';
+    $cache = $cacheDir . '/' . preg_replace('/[^a-z0-9_-]/i', '_', $key) . '.' . $extension;
+    if (is_file($cache) && (time() - (int)filemtime($cache)) < 86400 * 7 && filesize($cache) > 100) {
+        return $cache;
+    }
+
+    $urls = [];
+    if (preg_match('#^https?://#i', $relative)) {
+        $urls[] = $relative;
+    } else {
+        foreach ((array)$config['asset_base_urls'] as $base) {
+            $urls[] = rtrim((string)$base, '/') . '/' . ltrim($relative, '/');
+        }
+    }
+
+    foreach ($urls as $url) {
+        $data = false;
+        if (function_exists('curl_init')) {
+            $ch = curl_init($url);
+            curl_setopt_array($ch, [
+                CURLOPT_RETURNTRANSFER => true,
+                CURLOPT_FOLLOWLOCATION => true,
+                CURLOPT_CONNECTTIMEOUT => 5,
+                CURLOPT_TIMEOUT => 15,
+                CURLOPT_SSL_VERIFYPEER => false,
+                CURLOPT_SSL_VERIFYHOST => false,
+                CURLOPT_USERAGENT => 'Zurie-Kokurikulum/1.0',
+            ]);
+            $data = curl_exec($ch);
+            $code = (int)curl_getinfo($ch, CURLINFO_RESPONSE_CODE);
+            curl_close($ch);
+            if ($code < 200 || $code >= 400) $data = false;
+        } elseif (filter_var(ini_get('allow_url_fopen'), FILTER_VALIDATE_BOOLEAN)) {
+            $context = stream_context_create(['http' => ['timeout' => 15, 'user_agent' => 'Zurie-Kokurikulum/1.0']]);
+            $data = @file_get_contents($url, false, $context);
+        }
+        if (is_string($data) && strlen($data) > 100) {
+            $temp = $cache . '.tmp-' . bin2hex(random_bytes(3));
+            if (@file_put_contents($temp, $data, LOCK_EX) !== false && @getimagesize($temp)) {
+                @rename($temp, $cache);
+                @chmod($cache, 0644);
+                return $cache;
+            }
+            @unlink($temp);
+        }
+    }
+    return is_file($cache) ? $cache : null;
+}
+
+function ik_asset_data_uri(?string $file): string
+{
+    if (!$file || !is_file($file)) return '';
+    $mime = (string)(@mime_content_type($file) ?: 'image/jpeg');
+    $data = @file_get_contents($file);
+    return is_string($data) ? ('data:' . $mime . ';base64,' . base64_encode($data)) : '';
+}

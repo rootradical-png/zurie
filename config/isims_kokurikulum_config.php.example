@@ -1,0 +1,28 @@
+<?php
+/**
+ * Salin ke /zurie/config/isims_kokurikulum_config.php jika URL imej atau
+ * maklumat sijil perlu diubah. Fail sebenar patut dimasukkan dalam .gitignore.
+ */
+return [
+    // Kosongkan untuk papar semua database bukan sistem yang boleh dicapai user i-SIMS.
+    'database_include_regex' => '',
+    'database_exclude' => [],
+
+    // Sistem akan cuba URL mengikut turutan sehingga imej ditemui.
+    'asset_base_urls' => [
+        'http://i-sims.kmp.matrik.edu.my/',
+        'http://www.kmp.matrik.edu.my/isims/',
+    ],
+    'assets' => [
+        'logo_kpm' => 'image/logokpm.png',
+        'logo_kmp' => 'image/logokmp.jpg',
+        'stamp_kmp' => 'image/coplogokmp.png',
+        'director_signature' => 'image/signpeng.png',
+    ],
+
+    'director_name' => 'KHAIRINA BINTI SUBARI',
+    'college_name' => 'KOLEJ MATRIKULASI PERLIS',
+    'ministry_name' => 'KEMENTERIAN PENDIDIKAN',
+    'college_address' => '02600 ARAU, PERLIS',
+    'default_session' => '',
+];

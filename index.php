@@ -319,6 +319,7 @@ $displayRole = $isGuest ? 'Guest | Read-only Monitoring' : 'ICT | KMP';
                     <a class="submenu-link" data-force-nav href="/zurie/pages/isims_extract.php" target="_self">senarai_mis_lengkap</a>
                     <a class="submenu-link" data-force-nav href="/zurie/pages/isims_senarai.php" target="_self">senarai</a>
                     <a class="submenu-link" data-force-nav href="/zurie/pages/isims_rawatan_review.php" target="_self">Rawatan - Semak/Padam No Siri</a>
+                    <a class="submenu-link" data-force-nav href="/zurie/pages/isims_sijil_kokurikulum.php" target="_self">Sijil Akuan Kokurikulum</a>
                     <a class="submenu-link" data-force-nav href="/zurie/pages/ilmu_export.php" target="_self">ILMU GL14 Export</a>
                     <a class="submenu-link" data-force-nav href="/zurie/pages/ms365_export.php" target="_self">MS 365 Student Export</a>
                     <a class="submenu-link" data-force-nav href="/zurie/pages/delima_sync.php" target="_self" title="Upload CSV akaun DELIMa, tukar format dan sync ke table delima">DELIMa</a>
@@ -333,7 +334,6 @@ $displayRole = $isGuest ? 'Guest | Read-only Monitoring' : 'ICT | KMP';
                 <div class="submenu-wrap">
                     <a class="submenu-link" href="/zurie/upload/" target="_blank" rel="noopener noreferrer" title="Borang awam untuk pelajar sahkan identiti dan muat naik foto">Borang Upload Pelajar</a>
                     <a class="submenu-link" href="/zurie/pages/photo_audit.php" title="Semak kewujudan dan kualiti gambar MIS, tandakan repair atau hantar WhatsApp">Audit Gambar MIS</a>
-                    <a class="submenu-link" href="/zurie/pages/photo_versions.php" title="Lihat semua versi gambar SFTP, pilih satu dan standardkan kepada NOMATRIK.jpg">Versi Gambar SFTP</a>
                     <a class="submenu-link" id="photoReviewLink" href="/zurie/pages/upload_review.php" title="Semak gambar asal dan repaired, lulus, tolak atau sync ke MIS">Semakan, Repair &amp; Sync</a>
                     <a class="submenu-link" href="/zurie/pages/mis_sftp_setup.php" title="Uji konfigurasi dan sambungan SFTP dari NOC ke MIS">Tetapan SFTP MIS</a>
                     <a class="submenu-link" href="/zurie/pages/pg_live_lookup_setup.php" title="Uji semakan langsung PostgreSQL untuk pelajar yang belum masuk MySQL senarai">Semakan PostgreSQL Live</a>
