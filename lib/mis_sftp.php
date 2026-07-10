@@ -579,3 +579,50 @@ function zurie_mis_sftp_download_photo_file(string $remoteFilename, string $loca
         'remote_file' => $remoteFile,
     ];
 }
+
+/**
+ * Delete one file from the configured MIS photo directory.
+ * Only a single validated filename is accepted; paths are rejected.
+ *
+ * @return array{ok:bool,message:string,remote_file?:string}
+ */
+function zurie_mis_sftp_delete_photo_file(string $remoteFilename, ?array $config = null): array
+{
+    $config = $config ?? zurie_mis_sftp_config();
+    $status = zurie_mis_sftp_config_status($config);
+    if (!$status['ready']) {
+        return ['ok' => false, 'message' => 'Konfigurasi SFTP belum lengkap: ' . implode(', ', $status['missing'])];
+    }
+
+    try {
+        $remoteFilename = zurie_mis_sftp_validate_remote_filename($remoteFilename);
+    } catch (Throwable $e) {
+        return ['ok' => false, 'message' => $e->getMessage()];
+    }
+
+    $remoteFile = $status['remote_dir'] . '/' . $remoteFilename;
+    if ($status['driver'] === 'winscp') {
+        $result = zurie_mis_sftp_run_winscp([
+            'rm ' . zurie_mis_sftp_winscp_quote($remoteFile),
+        ], $config);
+        if (!$result['ok']) {
+            return ['ok' => false, 'message' => $result['message'], 'remote_file' => $remoteFile];
+        }
+        return ['ok' => true, 'message' => 'Fail SFTP berjaya dipadam.', 'remote_file' => $remoteFile];
+    }
+
+    $connected = zurie_mis_sftp_ssh2_connect($config);
+    if (!$connected['ok']) {
+        return $connected;
+    }
+    $sftp = $connected['sftp'];
+    if (@ssh2_sftp_stat($sftp, $remoteFile) === false) {
+        return ['ok' => true, 'message' => 'Fail SFTP sudah tiada.', 'remote_file' => $remoteFile];
+    }
+    if (!@ssh2_sftp_unlink($sftp, $remoteFile)) {
+        return ['ok' => false, 'message' => 'Permission SFTP tidak membenarkan fail dipadam.', 'remote_file' => $remoteFile];
+    }
+
+    return ['ok' => true, 'message' => 'Fail SFTP berjaya dipadam.', 'remote_file' => $remoteFile];
+}
+

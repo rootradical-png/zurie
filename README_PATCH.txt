@@ -1,26 +1,24 @@
-PATCH: Semakan Versi Gambar SFTP MIS
+PATCH: Arkib & Padam Gambar Lama SFTP
 
-Fungsi:
-1. Scan semua gambar dalam folder SFTP MIS.
-2. Kumpulkan fail mengikut No. Matrik walaupun nama/format berbeza.
-3. Papar semua versi gambar dan pilih satu gambar terbaik.
-4. Gambar pilihan ditukar kepada JPG 413x531 dan disimpan sebagai NOMATRIK.jpg.
-5. Fail lain tidak dipadam secara automatik; ia dimasukkan ke laporan CSV calon padam SFTP.
-6. Ada status Menunggu Padam dan tindakan tandakan pembersihan selesai.
+Fail diubah:
+- pages/photo_versions.php
+- lib/mis_sftp.php
+- .gitignore
 
-Selepas extract ke folder projek:
-- Pastikan PHP GD aktif.
-- Pastikan konfigurasi SFTP sedia.
-- Buka: /zurie/pages/photo_versions.php
-- Klik Scan SFTP.
+Fail baharu:
+- archive/sftp_photos/.htaccess
+- archive/sftp_photos/README.txt
 
-Jika akaun MySQL tidak boleh CREATE TABLE, jalankan:
-sql/photo_versions_sftp.sql
+Cara kerja:
+1. Pilih gambar utama dan jadikan NOMATRIK.jpg.
+2. Semak senarai calon padam.
+3. Klik "Arkib & Padam".
+4. Setiap fail dimuat turun ke /zurie/archive/sftp_photos/YYYY/MM/DD/NOMATRIK/ dahulu.
+5. Hanya selepas arkib berjaya, fail remote dipadam dari SFTP.
+6. Jika ada kegagalan, status menjadi "ARKIB/PADAM SEPARA" dan hanya fail gagal kekal untuk dicuba semula.
+7. Log JSONL disimpan dalam folder archive/sftp_photos/logs/.
 
-Git PC dev:
-git add .
-git commit -m "Add SFTP photo version review"
-git push
-
-Server:
-git pull
+Keperluan:
+- Akaun SFTP mesti mempunyai permission read/download dan delete.
+- Folder /zurie/archive/sftp_photos mesti boleh ditulis oleh Apache/PHP.
+- .htaccess mesti dibenarkan oleh konfigurasi Apache untuk menyekat akses web.

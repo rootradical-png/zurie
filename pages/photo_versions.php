@@ -5,7 +5,7 @@
  * - Kumpulkan gambar mengikut no matrik walaupun extension/nama fail berbeza.
  * - Admin pilih satu gambar terbaik.
  * - Gambar pilihan dibaiki/ditukar kepada JPG 413x531 dan dihantar sebagai NOMATRIK.jpg.
- * - Fail lain hanya dimasukkan ke laporan calon padam; tiada auto-delete SFTP.
+ * - Fail lain boleh diarkib ke folder Zurie terlebih dahulu, kemudian dipadam terus dari SFTP.
  */
 
 declare(strict_types=1);
@@ -69,6 +69,155 @@ function pv_manifest_path(): string
 function pv_work_dir(): string
 {
     return dirname(__DIR__) . '/data/photo_versions_work';
+}
+
+function pv_archive_root(): string
+{
+    return dirname(__DIR__) . '/archive/sftp_photos';
+}
+
+function pv_archive_display_path(string $absolutePath): string
+{
+    $root = rtrim(str_replace('\\', '/', dirname(__DIR__)), '/');
+    $path = str_replace('\\', '/', $absolutePath);
+    if (str_starts_with($path, $root . '/')) {
+        return '/zurie/' . ltrim(substr($path, strlen($root)), '/');
+    }
+    return $path;
+}
+
+function pv_safe_archive_filename(string $filename): string
+{
+    $filename = basename(str_replace('\\', '/', $filename));
+    $filename = preg_replace('/[<>:"\\|?*\x00-\x1F]/u', '_', $filename) ?? '';
+    $filename = trim($filename, " .\t\n\r\0\x0B");
+    return $filename !== '' ? $filename : ('photo_' . date('His') . '.bin');
+}
+
+function pv_append_archive_log(array $record): void
+{
+    $logDir = pv_archive_root() . '/logs';
+    if (!is_dir($logDir) && !@mkdir($logDir, 0755, true) && !is_dir($logDir)) {
+        return;
+    }
+    $line = json_encode($record, JSON_UNESCAPED_SLASHES | JSON_UNESCAPED_UNICODE);
+    if ($line !== false) {
+        @file_put_contents($logDir . '/' . date('Y-m') . '.jsonl', $line . PHP_EOL, FILE_APPEND | LOCK_EX);
+    }
+}
+
+/**
+ * Salin satu fail SFTP ke arkib tempatan tanpa memadam fail remote.
+ *
+ * @return array{ok:bool,message:string,archive_file?:string,archive_absolute?:string,remote_file?:string,bytes?:int,sha256?:string}
+ */
+function pv_archive_remote_file(string $filename, string $matrik, array $config): array
+{
+    try {
+        $filename = zurie_mis_sftp_validate_remote_filename($filename);
+    } catch (Throwable $e) {
+        return ['ok' => false, 'message' => $e->getMessage(), 'remote_file' => $filename];
+    }
+
+    $matrik = pv_clean_matrik($matrik);
+    if ($matrik === '') {
+        return ['ok' => false, 'message' => 'No matrik tidak sah.', 'remote_file' => $filename];
+    }
+
+    $archiveDir = pv_archive_root() . '/' . date('Y') . '/' . date('m') . '/' . date('d') . '/' . $matrik;
+    if (!is_dir($archiveDir) && !@mkdir($archiveDir, 0755, true) && !is_dir($archiveDir)) {
+        return ['ok' => false, 'message' => 'Folder arkib Zurie tidak dapat dicipta.', 'remote_file' => $filename];
+    }
+
+    $safeName = pv_safe_archive_filename($filename);
+    $archiveFile = $archiveDir . '/' . $safeName;
+    if (is_file($archiveFile)) {
+        $info = pathinfo($safeName);
+        $base = (string)($info['filename'] ?? 'photo');
+        $ext = isset($info['extension']) ? ('.' . $info['extension']) : '';
+        $archiveFile = $archiveDir . '/' . $base . '_' . date('His') . '_' . substr(hash('sha256', $filename . microtime(true)), 0, 8) . $ext;
+    }
+    $tempFile = $archiveFile . '.part-' . bin2hex(random_bytes(3));
+
+    $download = zurie_mis_sftp_download_photo_file($filename, $tempFile, $config);
+    if (empty($download['ok'])) {
+        @unlink($tempFile);
+        return ['ok' => false, 'message' => 'Arkib gagal: ' . (string)($download['message'] ?? 'Muat turun gagal.'), 'remote_file' => $filename];
+    }
+
+    $bytes = (int)@filesize($tempFile);
+    if ($bytes < 1) {
+        @unlink($tempFile);
+        return ['ok' => false, 'message' => 'Arkib gagal: fail kosong.', 'remote_file' => $filename];
+    }
+
+    if (!@rename($tempFile, $archiveFile)) {
+        if (!@copy($tempFile, $archiveFile)) {
+            @unlink($tempFile);
+            return ['ok' => false, 'message' => 'Arkib gagal disimpan dalam folder Zurie.', 'remote_file' => $filename];
+        }
+        @unlink($tempFile);
+    }
+    @chmod($archiveFile, 0644);
+
+    return [
+        'ok' => true,
+        'message' => 'Fail berjaya diarkib.',
+        'archive_file' => pv_archive_display_path($archiveFile),
+        'archive_absolute' => $archiveFile,
+        'remote_file' => $filename,
+        'bytes' => (int)@filesize($archiveFile),
+        'sha256' => (string)@hash_file('sha256', $archiveFile),
+    ];
+}
+
+/**
+ * Arkib satu fail SFTP secara tempatan dahulu, kemudian padam fail remote.
+ * Fail remote tidak akan dipadam jika proses arkib gagal.
+ *
+ * @return array{ok:bool,message:string,archive_file?:string,remote_file?:string,bytes?:int,sha256?:string}
+ */
+function pv_archive_then_delete(string $filename, string $matrik, array $config): array
+{
+    $archive = pv_archive_remote_file($filename, $matrik, $config);
+    if (empty($archive['ok'])) {
+        return $archive;
+    }
+
+    $delete = zurie_mis_sftp_delete_photo_file($filename, $config);
+    $record = [
+        'timestamp' => date('Y-m-d H:i:s'),
+        'operation' => 'archive_then_delete',
+        'matrik' => pv_clean_matrik($matrik),
+        'remote_file' => $filename,
+        'archive_file' => (string)($archive['archive_file'] ?? ''),
+        'bytes' => (int)($archive['bytes'] ?? 0),
+        'sha256' => (string)($archive['sha256'] ?? ''),
+        'deleted' => !empty($delete['ok']),
+        'delete_message' => (string)($delete['message'] ?? ''),
+        'actor' => pv_actor(),
+    ];
+    pv_append_archive_log($record);
+
+    if (empty($delete['ok'])) {
+        return [
+            'ok' => false,
+            'message' => 'Fail berjaya diarkib tetapi gagal dipadam dari SFTP: ' . (string)($delete['message'] ?? ''),
+            'archive_file' => (string)($archive['archive_file'] ?? ''),
+            'remote_file' => $filename,
+            'bytes' => (int)($archive['bytes'] ?? 0),
+            'sha256' => (string)($archive['sha256'] ?? ''),
+        ];
+    }
+
+    return [
+        'ok' => true,
+        'message' => 'Fail diarkib dan dipadam dari SFTP.',
+        'archive_file' => (string)($archive['archive_file'] ?? ''),
+        'remote_file' => $filename,
+        'bytes' => (int)($archive['bytes'] ?? 0),
+        'sha256' => (string)($archive['sha256'] ?? ''),
+    ];
 }
 
 function pv_load_manifest(): array
@@ -345,13 +494,42 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
                 throw new RuntimeException('Gagal tukar gambar pilihan kepada JPG: ' . (string)$repair['message']);
             }
 
+            $standardFile = $matrik . '.jpg';
+            $existingStandard = false;
+            foreach ($groups[$matrik] as $existingFile) {
+                if (strcasecmp((string)($existingFile['filename'] ?? ''), $standardFile) === 0) {
+                    $existingStandard = true;
+                    break;
+                }
+            }
+
+            // Arkibkan JPG standard lama sebelum ia diganti/ditulis semula.
+            if ($existingStandard) {
+                $oldStandardArchive = pv_archive_remote_file($standardFile, $matrik, $config);
+                if (empty($oldStandardArchive['ok'])) {
+                    @unlink($jpgTemp);
+                    throw new RuntimeException('Gambar standard lama tidak diganti kerana proses arkib gagal: ' . (string)($oldStandardArchive['message'] ?? ''));
+                }
+                pv_append_archive_log([
+                    'timestamp' => date('Y-m-d H:i:s'),
+                    'operation' => 'archive_before_replace',
+                    'matrik' => $matrik,
+                    'remote_file' => $standardFile,
+                    'archive_file' => (string)($oldStandardArchive['archive_file'] ?? ''),
+                    'bytes' => (int)($oldStandardArchive['bytes'] ?? 0),
+                    'sha256' => (string)($oldStandardArchive['sha256'] ?? ''),
+                    'deleted' => false,
+                    'delete_message' => 'Fail standard lama diarkib sebelum diganti.',
+                    'actor' => pv_actor(),
+                ]);
+            }
+
             $upload = zurie_mis_sftp_upload_photo($jpgTemp, $matrik, $config);
             @unlink($jpgTemp);
             if (!$upload['ok']) {
                 throw new RuntimeException('Gagal simpan gambar standard ke MIS: ' . (string)$upload['message']);
             }
 
-            $standardFile = $matrik . '.jpg';
             $candidates = [];
             foreach ($groups[$matrik] as $file) {
                 $filename = (string)$file['filename'];
@@ -388,16 +566,78 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
             pv_redirect(['q' => $matrik]);
         }
 
-        if ($action === 'mark_cleanup_done') {
+        if ($action === 'archive_delete') {
             $matrik = pv_clean_matrik((string)($_POST['matrik'] ?? ''));
             if ($matrik === '') {
                 throw new RuntimeException('No matrik tidak sah.');
             }
-            $stmt = $pdo->prepare("UPDATE student_photo_version_reviews SET cleanup_status='done', cleanup_done_at=NOW(), cleanup_done_by=? WHERE matrik=?");
-            $stmt->execute([pv_actor(), $matrik]);
-            $_SESSION['photo_versions_message'] = $matrik . ': laporan pembersihan ditanda selesai.';
-            $_SESSION['photo_versions_message_type'] = 'ok';
-            pv_redirect(['q' => $matrik]);
+
+            $stmt = $pdo->prepare('SELECT * FROM student_photo_version_reviews WHERE matrik=? LIMIT 1');
+            $stmt->execute([$matrik]);
+            $review = $stmt->fetch();
+            if (!$review) {
+                throw new RuntimeException('Rekod pemilihan gambar tidak ditemui.');
+            }
+
+            $candidates = json_decode((string)($review['delete_candidates_json'] ?? '[]'), true);
+            if (!is_array($candidates) || !$candidates) {
+                throw new RuntimeException('Tiada fail calon padam untuk pelajar ini.');
+            }
+
+            $standardFile = $matrik . '.jpg';
+            $success = [];
+            $failed = [];
+            $archives = [];
+            foreach (array_values(array_unique(array_map('strval', $candidates))) as $candidate) {
+                if ($candidate === '' || strcasecmp($candidate, $standardFile) === 0) {
+                    continue;
+                }
+                $result = pv_archive_then_delete($candidate, $matrik, $config);
+                if (!empty($result['ok'])) {
+                    $success[] = $candidate;
+                    if (!empty($result['archive_file'])) {
+                        $archives[] = (string)$result['archive_file'];
+                    }
+                } else {
+                    $failed[$candidate] = (string)($result['message'] ?? 'Gagal.');
+                }
+            }
+
+            $remaining = array_values(array_keys($failed));
+            $cleanupStatus = $remaining ? 'partial' : 'done';
+            $summary = count($success) . ' fail diarkib dan dipadam.';
+            if ($remaining) {
+                $summary .= ' ' . count($remaining) . ' fail belum berjaya: ' . implode('; ', array_map(
+                    static fn(string $file, string $reason): string => $file . ' — ' . $reason,
+                    array_keys($failed),
+                    array_values($failed)
+                ));
+            }
+            if ($archives) {
+                $summary .= ' Lokasi arkib: ' . dirname($archives[0]) . '/';
+            }
+
+            $update = $pdo->prepare('UPDATE student_photo_version_reviews
+                SET delete_candidates_json=?, cleanup_status=?, cleanup_done_at=?, cleanup_done_by=?, selection_message=?
+                WHERE matrik=?');
+            $update->execute([
+                json_encode($remaining, JSON_UNESCAPED_SLASHES | JSON_UNESCAPED_UNICODE),
+                $cleanupStatus,
+                $remaining ? null : date('Y-m-d H:i:s'),
+                pv_actor(),
+                $summary,
+                $matrik,
+            ]);
+
+            // Segarkan manifest supaya fail yang telah dipadam terus hilang daripada paparan.
+            $scan = zurie_mis_sftp_list_photo_files($config);
+            if (!empty($scan['ok']) && is_array($scan['files'] ?? null)) {
+                pv_save_manifest($scan['files']);
+            }
+
+            $_SESSION['photo_versions_message'] = $matrik . ': ' . $summary;
+            $_SESSION['photo_versions_message_type'] = $remaining ? 'bad' : 'ok';
+            pv_redirect(['q' => $matrik, 'view' => $remaining ? 'pending' : 'selected']);
         }
 
         throw new RuntimeException('Tindakan tidak dikenali.');
@@ -442,7 +682,7 @@ foreach ($groups as $matrik => $files) {
         continue;
     }
     if ($view === 'duplicate' && count($files) < 2) continue;
-    if ($view === 'pending' && (($review['cleanup_status'] ?? '') !== 'pending')) continue;
+    if ($view === 'pending' && !in_array((string)($review['cleanup_status'] ?? ''), ['pending', 'partial'], true)) continue;
     if ($view === 'selected' && !$review) continue;
     $filtered[$matrik] = $files;
 }
@@ -455,7 +695,7 @@ $page = min($page, $totalPages);
 $pageGroups = array_slice($filtered, ($page - 1) * $perPage, $perPage, true);
 
 $duplicateCount = count(array_filter($groups, static fn(array $items): bool => count($items) >= 2));
-$pendingCount = count(array_filter($reviews, static fn(array $row): bool => ($row['cleanup_status'] ?? '') === 'pending'));
+$pendingCount = count(array_filter($reviews, static fn(array $row): bool => in_array((string)($row['cleanup_status'] ?? ''), ['pending', 'partial'], true)));
 $selectedCount = count($reviews);
 $scanVersion = rawurlencode((string)($manifest['scanned_at'] ?? ''));
 ?>
@@ -474,7 +714,7 @@ $scanVersion = rawurlencode((string)($manifest['scanned_at'] ?? ''));
 <div class="card">
 <nav class="breadcrumb"><a href="/zurie/">Dashboard</a><span>›</span><a href="/zurie/pages/photo_audit.php">Audit Gambar MIS</a><span>›</span><strong>Versi Gambar SFTP</strong></nav>
 <div class="head">
-<div><h1 class="title">Semakan Versi Gambar MIS</h1><div class="muted">Pilih gambar terbaik. Sistem convert kepada JPG 413×531 dan simpan sebagai <b>NOMATRIK.jpg</b>. Fail lain hanya masuk laporan calon padam.</div></div>
+<div><h1 class="title">Semakan Versi Gambar MIS</h1><div class="muted">Pilih gambar terbaik. Sistem convert kepada JPG 413×531 dan simpan sebagai <b>NOMATRIK.jpg</b>. Fail lain boleh diarkib ke folder Zurie dan dipadam terus dari SFTP selepas pengesahan.</div></div>
 <div class="toolbar">
 <form method="post" onsubmit="return confirm('Scan semua fail gambar dalam SFTP MIS sekarang? Proses mungkin mengambil sedikit masa.');">
 <input type="hidden" name="csrf" value="<?= pv_h($csrf) ?>"><input type="hidden" name="action" value="scan">
@@ -493,7 +733,7 @@ $scanVersion = rawurlencode((string)($manifest['scanned_at'] ?? ''));
 <div class="howto">
 <div class="step"><b>1. Scan SFTP</b><br><span class="muted">Klik butang Scan SFTP untuk membaca semua fail JPG, JPEG dan PNG. Fail dengan No. Matrik sama akan dikumpulkan walaupun extension berbeza.</span></div>
 <div class="step"><b>2. Buka 2+ versi</b><br><span class="muted">Klik kad oren. Semua fail bagi No. Matrik sama akan muncul sebelah-menyebelah.</span></div>
-<div class="step"><b>3. Pilih gambar</b><br><span class="muted">Tanda satu gambar, kemudian klik Jadikan NOMATRIK.jpg. Fail lain masuk laporan calon padam.</span></div>
+<div class="step"><b>3. Pilih gambar</b><br><span class="muted">Tanda satu gambar dan jadikan NOMATRIK.jpg. Selepas semak, klik Arkib & Padam; sistem simpan salinan dalam Zurie sebelum memadam SFTP.</span></div>
 </div>
 <div class="exts">
 <?php foreach ($extensionCounts as $ext => $count): ?><span class="badge yellow"><?= pv_h(strtoupper($ext)) ?>: <?= (int)$count ?></span><?php endforeach; ?>
@@ -534,17 +774,18 @@ $scanVersion = rawurlencode((string)($manifest['scanned_at'] ?? ''));
     $review = $reviews[$matrik] ?? null;
     $name = (string)($names[$matrik] ?? ($review['nama'] ?? ''));
     $cleanupStatus = (string)($review['cleanup_status'] ?? '');
-    $groupClass = $cleanupStatus === 'pending' ? 'pending' : ($review ? 'selected' : '');
+    $groupClass = in_array($cleanupStatus, ['pending', 'partial'], true) ? 'pending' : ($review ? 'selected' : '');
     $selectedSource = (string)($review['selected_source'] ?? '');
     $candidates = $review ? json_decode((string)($review['delete_candidates_json'] ?? '[]'), true) : [];
     if (!is_array($candidates)) $candidates = [];
 ?>
-<form class="group <?= pv_h($groupClass) ?>" method="post" onsubmit="return confirm('Gunakan gambar pilihan sebagai <?= pv_h($matrik) ?>.jpg? Fail lain TIDAK dipadam secara automatik.');">
+<form class="group <?= pv_h($groupClass) ?>" method="post" onsubmit="return confirm('Gunakan gambar pilihan sebagai <?= pv_h($matrik) ?>.jpg? Fail lain akan kekal sehingga puan klik Arkib & Padam.');">
 <input type="hidden" name="csrf" value="<?= pv_h($csrf) ?>"><input type="hidden" name="action" value="select"><input type="hidden" name="matrik" value="<?= pv_h($matrik) ?>"><input type="hidden" name="nama" value="<?= pv_h($name) ?>">
 <div class="group-head">
 <div><h2><?= pv_h($matrik) ?><?= $name !== '' ? ' — ' . pv_h($name) : '' ?></h2><span class="muted"><?= count($files) ?> fail gambar ditemui · dipaparkan sebelah-menyebelah</span></div>
 <div>
-<?php if ($cleanupStatus === 'pending'): ?><span class="badge red">MENUNGGU PADAM</span>
+<?php if ($cleanupStatus === 'partial'): ?><span class="badge red">ARKIB/PADAM SEPARA</span>
+<?php elseif ($cleanupStatus === 'pending'): ?><span class="badge red">SEDIA ARKIB & PADAM</span>
 <?php elseif ($review): ?><span class="badge green">GAMBAR UTAMA DIPILIH</span>
 <?php else: ?><span class="badge yellow">BELUM DISEMAK</span><?php endif; ?>
 </div>
@@ -570,8 +811,12 @@ $scanVersion = rawurlencode((string)($manifest['scanned_at'] ?? ''));
 <?php endif; ?>
 </div>
 </form>
-<?php if ($review && $cleanupStatus === 'pending'): ?>
-<form method="post" style="margin:-10px 0 18px;text-align:right" onsubmit="return confirm('Tandakan pembersihan SFTP bagi <?= pv_h($matrik) ?> sebagai selesai?');"><input type="hidden" name="csrf" value="<?= pv_h($csrf) ?>"><input type="hidden" name="action" value="mark_cleanup_done"><input type="hidden" name="matrik" value="<?= pv_h($matrik) ?>"><button class="btn secondary" type="submit">Tandakan fail lama sudah dipadam</button></form>
+<?php if ($review && in_array($cleanupStatus, ['pending', 'partial'], true) && $candidates): ?>
+<form method="post" style="margin:-10px 0 18px;padding:0 16px;display:flex;justify-content:flex-end;gap:10px;align-items:center;flex-wrap:wrap" onsubmit="return confirm('ARKIB & PADAM <?= count($candidates) ?> fail lama untuk <?= pv_h($matrik) ?>? Sistem akan muat turun setiap fail ke folder arkib Zurie terlebih dahulu. Fail standard <?= pv_h($matrik) ?>.jpg tidak akan dipadam.');">
+<input type="hidden" name="csrf" value="<?= pv_h($csrf) ?>"><input type="hidden" name="action" value="archive_delete"><input type="hidden" name="matrik" value="<?= pv_h($matrik) ?>">
+<span class="muted">Arkib: <code>/zurie/archive/sftp_photos/YYYY/MM/DD/<?= pv_h($matrik) ?>/</code></span>
+<button class="btn red" type="submit">🗄 Arkib & Padam <?= count($candidates) ?> Fail</button>
+</form>
 <?php endif; ?>
 <?php endforeach; ?>
 <?php endif; ?>
@@ -581,5 +826,5 @@ $scanVersion = rawurlencode((string)($manifest['scanned_at'] ?? ''));
 <?php if ($i === $page): ?><span class="active"><?= $i ?></span><?php else: ?><a href="?<?= pv_h(http_build_query($params)) ?>"><?= $i ?></a><?php endif; ?>
 <?php endfor; ?></nav><?php endif; ?>
 
-<div class="card"><b>Nota keselamatan:</b> Modul ini tidak memadam fail SFTP. Selepas gambar utama disahkan dalam MIS, muat turun CSV dan padam fail lama secara manual/berasingan. Fail standard <code>NOMATRIK.jpg</code> tidak dimasukkan sebagai calon padam.</div>
+<div class="card"><b>Nota keselamatan:</b> Butang <b>Arkib & Padam</b> akan memuat turun dan mengesahkan setiap fail ke folder arkib Zurie sebelum arahan padam dihantar ke SFTP. Jika arkib gagal, fail remote tidak dipadam. Fail standard <code>NOMATRIK.jpg</code> sentiasa dilindungi.</div>
 </div></body></html>
