@@ -55,6 +55,15 @@ function ik_config(): array
         'student_database_regex' => trim((string)($feature['student_database_regex'] ?? '~^(?:db_pelajarkmp|_pelajarkmp(?:20[0-9]{2})?)$~i')),
         // Backward compatibility untuk patch terdahulu.
         'database_include_regex' => trim((string)($feature['database_include_regex'] ?? '')),
+        // Senarai database legacy yang tetap dipaparkan walaupun SHOW DATABASES
+        // menyembunyikannya kerana privilege user belum lengkap.
+        'student_database_candidates' => array_values(array_unique(array_filter(array_map(
+            static fn($v): string => trim((string)$v),
+            (array)($feature['student_database_candidates'] ?? array_merge(
+                ['db_pelajarkmp', '_pelajarkmp'],
+                array_map(static fn(int $year): string => '_pelajarkmp' . $year, range(2013, (int)date('Y') + 1))
+            ))
+        )))),
         // Paparkan semua database bukan sistem yang akaun aplikasi boleh capai.
         // Tetapan false mengekalkan penapisan nama lama jika diperlukan.
         'show_all_accessible_databases' => (bool)($feature['show_all_accessible_databases'] ?? true),
@@ -71,6 +80,7 @@ function ik_config(): array
         'asset_base_urls' => array_values(array_filter(array_map(
             static fn($v): string => rtrim(trim((string)$v), '/') . '/',
             (array)($feature['asset_base_urls'] ?? [
+                'http://i-sims.kmp.matrik.edu.my/esasi/image/',
                 'http://i-sims.kmp.matrik.edu.my/',
                 'http://www.kmp.matrik.edu.my/isims/',
             ])
@@ -168,12 +178,22 @@ function ik_database_year(string $database): int
 function ik_list_databases(PDO $pdo, array $config): array
 {
     $accessible = ik_list_accessible_databases($pdo, $config);
+    $candidates = array_values(array_filter(array_map(
+        static fn($v): string => trim((string)$v),
+        (array)($config['student_database_candidates'] ?? [])
+    )));
+
+    // Gabungkan database yang benar-benar kelihatan dengan semua nama database
+    // legacy yang dijangka. Ini memastikan dropdown tidak tinggal dua pilihan sahaja.
     $result = !empty($config['show_all_accessible_databases'])
-        ? $accessible
-        : array_values(array_filter(
-            $accessible,
-            static fn(string $db): bool => ik_is_student_database($db, $config)
-        ));
+        ? array_values(array_unique(array_merge($candidates, $accessible)))
+        : array_values(array_unique(array_merge(
+            $candidates,
+            array_values(array_filter(
+                $accessible,
+                static fn(string $db): bool => ik_is_student_database($db, $config)
+            ))
+        )));
 
     usort($result, static function (string $a, string $b): int {
         $aCurrent = strcasecmp($a, 'db_pelajarkmp') === 0 ? 0 : (strcasecmp($a, '_pelajarkmp') === 0 ? 1 : 2);

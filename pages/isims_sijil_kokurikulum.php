@@ -32,7 +32,7 @@ try {
     $databases = ik_list_databases($pdo, $config);
     $currentDbAccount = ik_current_account($pdo);
     if ($selectedDb !== '' && !in_array($selectedDb, $databases, true)) {
-        throw new RuntimeException('Database yang dipilih tidak dibenarkan atau tidak dapat dicapai oleh user i-SIMS.');
+        throw new RuntimeException('Database yang dipilih tidak terdapat dalam senarai database kokurikulum.');
     }
 
     if ($sessionValue === '' && $selectedDb !== '') {
