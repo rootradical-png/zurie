@@ -27,7 +27,8 @@ try {
     }
 
     $student = ik_get_student($pdo, $database, $matrik);
-    $activities = ik_get_activities($pdo, $databases, $database, $matrik);
+    $activityDatabases = ik_activity_database_order($pdo, $config, $database);
+    $activities = ik_get_activities($pdo, $activityDatabases, $database, $matrik);
     $renderer = new KokurikulumCertificateRenderer($config, $student, $activities, $session);
     $pdf = $renderer->render();
     $filename = preg_replace('/[^A-Z0-9_-]/i', '', (string)$student['matrik']) . '.pdf';

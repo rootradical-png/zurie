@@ -50,7 +50,15 @@ function ik_config(): array
             ['information_schema', 'mysql', 'performance_schema', 'sys'],
             array_map('strval', (array)($feature['database_exclude'] ?? []))
         ))),
+        // Dropdown pelajar ditapis secara dinamik. Tahun baharu akan muncul
+        // automatik apabila akaun MySQL menerima SELECT untuk database itu.
+        'student_database_regex' => trim((string)($feature['student_database_regex'] ?? '~^(?:db_pelajarkmp|_pelajarkmp(?:20[0-9]{2})?)$~i')),
+        // Backward compatibility untuk patch terdahulu.
         'database_include_regex' => trim((string)($feature['database_include_regex'] ?? '')),
+        'activity_database_candidates' => array_values(array_filter(array_map(
+            static fn($v): string => trim((string)$v),
+            (array)($feature['activity_database_candidates'] ?? ['db'])
+        ))),
         'asset_base_urls' => array_values(array_filter(array_map(
             static fn($v): string => rtrim(trim((string)$v), '/') . '/',
             (array)($feature['asset_base_urls'] ?? [
@@ -109,25 +117,85 @@ function ik_quote_identifier(string $value): string
 }
 
 /** @return string[] */
-function ik_list_databases(PDO $pdo, array $config): array
+function ik_list_accessible_databases(PDO $pdo, array $config): array
 {
     $exclude = array_map('strtolower', (array)$config['database_exclude']);
-    $regex = (string)$config['database_include_regex'];
     $result = [];
 
+    // SHOW DATABASES tanpa global SHOW DATABASES masih memulangkan database
+    // yang akaun ini mempunyai privilege. Jadi tidak perlu buka akses global.
     foreach ($pdo->query('SHOW DATABASES')->fetchAll(PDO::FETCH_COLUMN) as $db) {
         $db = trim((string)$db);
         if ($db === '' || in_array(strtolower($db), $exclude, true)) {
             continue;
         }
-        if ($regex !== '' && @preg_match($regex, '') !== false && !preg_match($regex, $db)) {
-            continue;
-        }
         $result[] = $db;
     }
 
+    $result = array_values(array_unique($result));
     natcasesort($result);
     return array_values($result);
+}
+
+function ik_is_student_database(string $database, array $config): bool
+{
+    $regex = trim((string)($config['student_database_regex'] ?? ''));
+    if ($regex === '') {
+        $regex = trim((string)($config['database_include_regex'] ?? ''));
+    }
+    if ($regex === '') {
+        $regex = '~^(?:db_pelajarkmp|_pelajarkmp(?:20[0-9]{2})?)$~i';
+    }
+    $valid = @preg_match($regex, '');
+    return $valid !== false && preg_match($regex, $database) === 1;
+}
+
+function ik_database_year(string $database): int
+{
+    return preg_match('/(20[0-9]{2})$/', $database, $m) ? (int)$m[1] : 9999;
+}
+
+/** @return string[] */
+function ik_list_databases(PDO $pdo, array $config): array
+{
+    $result = array_values(array_filter(
+        ik_list_accessible_databases($pdo, $config),
+        static fn(string $db): bool => ik_is_student_database($db, $config)
+    ));
+
+    usort($result, static function (string $a, string $b): int {
+        $aCurrent = strcasecmp($a, 'db_pelajarkmp') === 0 ? 0 : (strcasecmp($a, '_pelajarkmp') === 0 ? 1 : 2);
+        $bCurrent = strcasecmp($b, 'db_pelajarkmp') === 0 ? 0 : (strcasecmp($b, '_pelajarkmp') === 0 ? 1 : 2);
+        if ($aCurrent !== $bCurrent) return $aCurrent <=> $bCurrent;
+        $yearCompare = ik_database_year($b) <=> ik_database_year($a);
+        return $yearCompare !== 0 ? $yearCompare : strnatcasecmp($a, $b);
+    });
+    return $result;
+}
+
+/** @return string[] */
+function ik_activity_database_order(PDO $pdo, array $config, string $selectedDatabase): array
+{
+    $accessible = ik_list_accessible_databases($pdo, $config);
+    $preferred = array_values(array_filter(array_map('strval', (array)($config['activity_database_candidates'] ?? []))));
+    return array_values(array_unique(array_merge([$selectedDatabase], $preferred, $accessible)));
+}
+
+function ik_current_account(PDO $pdo): string
+{
+    try {
+        return trim((string)$pdo->query('SELECT CURRENT_USER()')->fetchColumn());
+    } catch (Throwable) {
+        return '';
+    }
+}
+
+function ik_database_label(string $database): string
+{
+    if (strcasecmp($database, 'db_pelajarkmp') === 0) return $database . ' — Data semasa';
+    if (strcasecmp($database, '_pelajarkmp') === 0) return $database . ' — Data legacy semasa';
+    if (preg_match('/(20[0-9]{2})$/', $database, $m)) return $database . ' — Tahun ' . $m[1];
+    return $database;
 }
 
 /** @return array<string,string> lower-case => actual */

@@ -13,6 +13,8 @@ zurie_portal_require_extract_access();
 $config = ik_config();
 $error = '';
 $databases = [];
+$allDatabases = [];
+$currentDbAccount = '';
 $students = [];
 $student = null;
 $activities = ['section1' => [], 'section2' => [], 'section3' => [], 'activity_database' => ''];
@@ -24,7 +26,9 @@ $sessionValue = trim((string)($_GET['session'] ?? ''));
 
 try {
     $pdo = ik_connect($config);
+    $allDatabases = ik_list_accessible_databases($pdo, $config);
     $databases = ik_list_databases($pdo, $config);
+    $currentDbAccount = ik_current_account($pdo);
     if ($selectedDb !== '' && !in_array($selectedDb, $databases, true)) {
         throw new RuntimeException('Database yang dipilih tidak dibenarkan atau tidak dapat dicapai oleh user i-SIMS.');
     }
@@ -39,7 +43,8 @@ try {
 
     if ($selectedDb !== '' && $selectedMatrik !== '') {
         $student = ik_get_student($pdo, $selectedDb, $selectedMatrik);
-        $activities = ik_get_activities($pdo, $databases, $selectedDb, $selectedMatrik);
+        $activityDatabases = ik_activity_database_order($pdo, $config, $selectedDb);
+        $activities = ik_get_activities($pdo, $activityDatabases, $selectedDb, $selectedMatrik);
         if ($query === '') $query = $selectedMatrik;
     }
 } catch (Throwable $e) {
@@ -83,21 +88,26 @@ function koku_query(array $changes = []): string
 </div>
 <div class="status">
 <span class="pill <?= ik_config_ready($config) ? 'ok' : 'bad' ?>">Config: <?= ik_config_ready($config) ? 'SEDIA' : 'BELUM LENGKAP' ?></span>
-<span class="pill">Database boleh dicapai: <?= count($databases) ?></span>
+<span class="pill">Database pelajar: <?= count($databases) ?></span>
+<span class="pill">Semua DB boleh dicapai: <?= count($allDatabases) ?></span>
+<?php if ($currentDbAccount !== ''): ?><span class="pill">Akaun DB: <?= ik_h($currentDbAccount) ?></span><?php endif; ?>
 <?php foreach ($assetFiles as $key => $file): ?><span class="pill <?= $file ? 'ok' : 'bad' ?>"><?= ik_h(str_replace('_',' ',strtoupper($key))) ?>: <?= $file ? 'OK' : 'TIDAK DIJUMPAI' ?></span><?php endforeach; ?>
 </div>
 </div>
 
 <?php if ($error !== ''): ?><div class="notice bad"><?= ik_h($error) ?></div><?php endif; ?>
+<?php if ($error === '' && !$databases): ?>
+<div class="notice bad">Tiada database pelajar boleh dicapai. Jalankan SQL akses dalam <code>sql/isims_kokurikulum_grant.sql</code> menggunakan akaun MySQL admin/root. Akaun aplikasi semasa: <b><?= ik_h($currentDbAccount ?: 'tidak dapat dikenal pasti') ?></b>.</div>
+<?php endif; ?>
 
 <div class="card">
 <form method="get" class="toolbar">
-<div class="field"><label>Database i-SIMS lama</label><select name="db" required onchange="this.form.submit()"><option value="">— Pilih database —</option><?php foreach ($databases as $db): ?><option value="<?= ik_h($db) ?>" <?= $db === $selectedDb ? 'selected' : '' ?>><?= ik_h($db) ?></option><?php endforeach; ?></select></div>
+<div class="field"><label>Database i-SIMS lama</label><select name="db" required onchange="this.form.submit()"><option value="">— Pilih database —</option><?php foreach ($databases as $db): ?><option value="<?= ik_h($db) ?>" <?= $db === $selectedDb ? 'selected' : '' ?>><?= ik_h(ik_database_label($db)) ?></option><?php endforeach; ?></select></div>
 <div class="field"><label>No. Matrik atau No. KP</label><input type="text" name="q" value="<?= ik_h($query) ?>" placeholder="Contoh: MA2614110409 atau 071028100344" autocomplete="off"></div>
 <div class="field"><label>Sesi pada sijil</label><input type="text" name="session" value="<?= ik_h($sessionValue) ?>" placeholder="2025/2026"></div>
 <div><button class="btn" type="submit">Cari Pelajar</button></div>
 </form>
-<p class="muted" style="margin-bottom:0">Dropdown dibina terus daripada <code>SHOW DATABASES</code>. Database sistem MySQL disorok. Data sijil dibaca terus; tiada salinan data lama disimpan dalam Zurie.</p>
+<p class="muted" style="margin-bottom:0">Dropdown dibina terus daripada server i-SIMS menggunakan <code>SHOW DATABASES</code>, kemudian ditapis kepada <code>db_pelajarkmp</code>, <code>_pelajarkmp</code> dan <code>_pelajarkmpYYYY</code>. Database tahun baharu akan muncul automatik apabila akaun MySQL diberi akses. Data dibaca terus; tiada salinan disimpan dalam Zurie.</p>
 </div>
 
 <?php if ($students): ?>
