@@ -684,69 +684,104 @@ function ik_asset_cache_dir(): string
     return dirname(__DIR__) . '/data/kokurikulum_assets';
 }
 
-function ik_asset_file(array $config, string $key): ?string
+function ik_fetch_remote_image(string $url): string|false
 {
-    $relative = trim((string)($config['assets'][$key] ?? ''));
-    if ($relative === '') return null;
-
-    $cacheDir = ik_asset_cache_dir();
-    if (!is_dir($cacheDir) && !@mkdir($cacheDir, 0755, true) && !is_dir($cacheDir)) {
-        return null;
-    }
-    $extension = strtolower((string)pathinfo(parse_url($relative, PHP_URL_PATH) ?: $relative, PATHINFO_EXTENSION));
-    if (!in_array($extension, ['jpg', 'jpeg', 'png'], true)) $extension = 'img';
-    $cache = $cacheDir . '/' . preg_replace('/[^a-z0-9_-]/i', '_', $key) . '.' . $extension;
-    if (is_file($cache) && (time() - (int)filemtime($cache)) < 86400 * 7 && filesize($cache) > 100) {
-        return $cache;
+    $attempts = [[$url, null]];
+    $parts = @parse_url($url);
+    if (is_array($parts) && !empty($parts['host']) && strcasecmp((string)$parts['host'], 'i-sims.kmp.matrik.edu.my') === 0) {
+        $ipUrl = 'http://10.14.48.80' . ((string)($parts['path'] ?? '/'));
+        if (!empty($parts['query'])) $ipUrl .= '?' . $parts['query'];
+        $attempts[] = [$ipUrl, 'i-sims.kmp.matrik.edu.my'];
     }
 
-    $urls = [];
-    if (preg_match('#^https?://#i', $relative)) {
-        $urls[] = $relative;
-    } else {
-        foreach ((array)$config['asset_base_urls'] as $base) {
-            $base = rtrim((string)$base, '/');
-            $path = ltrim($relative, '/');
-            // Elak URL salah seperti /esasi/image/image/logokmp.jpg.
-            if (preg_match('#/image$#i', $base) && str_starts_with(strtolower($path), 'image/')) {
-                $path = substr($path, 6);
-            }
-            $urls[] = $base . '/' . $path;
-        }
-    }
-
-    foreach ($urls as $url) {
+    foreach ($attempts as [$fetchUrl, $hostHeader]) {
         $data = false;
         if (function_exists('curl_init')) {
-            $ch = curl_init($url);
+            $ch = curl_init($fetchUrl);
+            $headers = [];
+            if ($hostHeader) $headers[] = 'Host: ' . $hostHeader;
             curl_setopt_array($ch, [
                 CURLOPT_RETURNTRANSFER => true,
                 CURLOPT_FOLLOWLOCATION => true,
                 CURLOPT_CONNECTTIMEOUT => 5,
-                CURLOPT_TIMEOUT => 15,
+                CURLOPT_TIMEOUT => 20,
                 CURLOPT_SSL_VERIFYPEER => false,
                 CURLOPT_SSL_VERIFYHOST => false,
-                CURLOPT_USERAGENT => 'Zurie-Kokurikulum/1.0',
+                CURLOPT_USERAGENT => 'Zurie-Kokurikulum/5.0',
+                CURLOPT_HTTPHEADER => $headers,
             ]);
             $data = curl_exec($ch);
             $code = (int)curl_getinfo($ch, CURLINFO_RESPONSE_CODE);
             curl_close($ch);
             if ($code < 200 || $code >= 400) $data = false;
         } elseif (filter_var(ini_get('allow_url_fopen'), FILTER_VALIDATE_BOOLEAN)) {
-            $context = stream_context_create(['http' => ['timeout' => 15, 'user_agent' => 'Zurie-Kokurikulum/1.0']]);
-            $data = @file_get_contents($url, false, $context);
+            $headers = "User-Agent: Zurie-Kokurikulum/5.0\r\n";
+            if ($hostHeader) $headers .= 'Host: ' . $hostHeader . "\r\n";
+            $context = stream_context_create(['http' => [
+                'timeout' => 20,
+                'follow_location' => 1,
+                'header' => $headers,
+            ]]);
+            $data = @file_get_contents($fetchUrl, false, $context);
         }
-        if (is_string($data) && strlen($data) > 100) {
-            $temp = $cache . '.tmp-' . bin2hex(random_bytes(3));
-            if (@file_put_contents($temp, $data, LOCK_EX) !== false && @getimagesize($temp)) {
-                @rename($temp, $cache);
-                @chmod($cache, 0644);
-                return $cache;
-            }
-            @unlink($temp);
-        }
+        if (is_string($data) && strlen($data) > 100) return $data;
     }
-    return is_file($cache) ? $cache : null;
+    return false;
+}
+
+function ik_asset_url(array $config, string $key): string
+{
+    $value = trim((string)($config['assets'][$key] ?? ''));
+    if ($value === '') return '';
+    if (preg_match('#^https?://#i', $value)) return $value;
+    $base = rtrim((string)($config['asset_base_urls'][0] ?? ''), '/');
+    $path = ltrim($value, '/');
+    if (preg_match('#/image$#i', $base) && str_starts_with(strtolower($path), 'image/')) $path = substr($path, 6);
+    return $base !== '' ? $base . '/' . $path : '';
+}
+
+function ik_asset_file(array $config, string $key): ?string
+{
+    $url = ik_asset_url($config, $key);
+    if ($url === '') return null;
+
+    $cacheDir = ik_asset_cache_dir();
+    if (!is_dir($cacheDir) && !@mkdir($cacheDir, 0755, true) && !is_dir($cacheDir)) return null;
+
+    // Terima apa-apa extension URL, tetapi simpan berdasarkan format imej sebenar.
+    foreach (['png', 'jpg', 'jpeg'] as $ext) {
+        $existing = $cacheDir . '/' . preg_replace('/[^a-z0-9_-]/i', '_', $key) . '.' . $ext;
+        if (is_file($existing) && filesize($existing) > 100) return $existing;
+    }
+
+    $data = ik_fetch_remote_image($url);
+    if (!is_string($data)) return null;
+
+    $tmp = $cacheDir . '/tmp-' . preg_replace('/[^a-z0-9_-]/i', '_', $key) . '-' . bin2hex(random_bytes(4));
+    if (@file_put_contents($tmp, $data, LOCK_EX) === false) return null;
+    $info = @getimagesize($tmp);
+    if (!$info || !in_array((int)$info[2], [IMAGETYPE_JPEG, IMAGETYPE_PNG], true)) {
+        @unlink($tmp);
+        return null;
+    }
+    $ext = (int)$info[2] === IMAGETYPE_PNG ? 'png' : 'jpg';
+    $cache = $cacheDir . '/' . preg_replace('/[^a-z0-9_-]/i', '_', $key) . '.' . $ext;
+    @unlink($cache);
+    if (!@rename($tmp, $cache)) {
+        @unlink($tmp);
+        return null;
+    }
+    @chmod($cache, 0644);
+    return $cache;
+}
+
+function ik_asset_preview_uri(array $config, string $key, ?string $localFile): string
+{
+    $local = ik_asset_data_uri($localFile);
+    if ($local !== '') return $local;
+    // Preview browser boleh terus mengambil imej intranet walaupun PHP server
+    // gagal resolve DNS atau allow_url_fopen/cURL tidak tersedia.
+    return ik_asset_url($config, $key);
 }
 
 function ik_asset_data_uri(?string $file): string

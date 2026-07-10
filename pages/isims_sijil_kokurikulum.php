@@ -61,7 +61,10 @@ $assetFiles = [];
 foreach (['logo_kpm','logo_kmp','stamp_kmp','director_signature'] as $assetKey) {
     $assetFiles[$assetKey] = ik_asset_file($config, $assetKey);
 }
-$assetUris = array_map('ik_asset_data_uri', $assetFiles);
+$assetUris = [];
+foreach ($assetFiles as $assetKey => $assetFile) {
+    $assetUris[$assetKey] = ik_asset_preview_uri($config, $assetKey, $assetFile);
+}
 
 function koku_query(array $changes = []): string
 {
@@ -97,7 +100,7 @@ function koku_query(array $changes = []): string
 <span class="pill">Database dipaparkan: <?= count($databases) ?></span>
 <span class="pill">Semua DB boleh dicapai: <?= count($allDatabases) ?></span>
 <?php if ($currentDbAccount !== ''): ?><span class="pill">Akaun DB: <?= ik_h($currentDbAccount) ?></span><?php endif; ?>
-<?php foreach ($assetFiles as $key => $file): ?><span class="pill <?= $file ? 'ok' : 'bad' ?>"><?= ik_h(str_replace('_',' ',strtoupper($key))) ?>: <?= $file ? 'OK' : 'TIDAK DIJUMPAI' ?></span><?php endforeach; ?>
+<?php foreach ($assetUris as $key => $uri): ?><span class="pill <?= $uri !== '' ? 'ok' : 'bad' ?>"><?= ik_h(str_replace('_',' ',strtoupper($key))) ?>: <?= $assetFiles[$key] ? 'CACHE OK' : ($uri !== '' ? 'URL OK' : 'TIDAK DIJUMPAI') ?></span><?php endforeach; ?>
 </div>
 </div>
 
