@@ -5,7 +5,7 @@
  * - Kumpulkan gambar mengikut no matrik walaupun extension/nama fail berbeza.
  * - Admin pilih satu gambar terbaik.
  * - Gambar pilihan dibaiki/ditukar kepada JPG 413x531 dan dihantar sebagai NOMATRIK.jpg.
- * - Fail lain boleh diarkib ke folder Zurie terlebih dahulu, kemudian dipadam terus dari SFTP.
+ * - Fail lain cuba diarkib dahulu. Jika arkib gagal, fail tidak dipilih dipadam terus dari SFTP.
  */
 
 declare(strict_types=1);
@@ -217,6 +217,57 @@ function pv_archive_then_delete(string $filename, string $matrik, array $config)
         'remote_file' => $filename,
         'bytes' => (int)($archive['bytes'] ?? 0),
         'sha256' => (string)($archive['sha256'] ?? ''),
+    ];
+}
+
+/**
+ * Bersihkan fail versi yang tidak dipilih.
+ * Sistem cuba arkib dahulu. Jika arkib gagal, fail tetap dipadam terus
+ * kerana gambar standard baharu sudah berjaya disimpan dan fail ini bukan
+ * fail pilihan. Fail standard NOMATRIK.jpg mesti dikecualikan oleh pemanggil.
+ *
+ * @return array{ok:bool,message:string,archive_file?:string,remote_file?:string,deleted_without_archive?:bool,archive_error?:string}
+ */
+function pv_cleanup_unselected_file(string $filename, string $matrik, array $config): array
+{
+    $archived = pv_archive_then_delete($filename, $matrik, $config);
+    if (!empty($archived['ok'])) {
+        $archived['deleted_without_archive'] = false;
+        return $archived;
+    }
+
+    $archiveError = (string)($archived['message'] ?? 'Arkib gagal.');
+    $delete = zurie_mis_sftp_delete_photo_file($filename, $config);
+
+    pv_append_archive_log([
+        'timestamp' => date('Y-m-d H:i:s'),
+        'operation' => 'delete_without_archive',
+        'matrik' => pv_clean_matrik($matrik),
+        'remote_file' => $filename,
+        'archive_file' => '',
+        'bytes' => 0,
+        'sha256' => '',
+        'deleted' => !empty($delete['ok']),
+        'delete_message' => 'Arkib gagal: ' . $archiveError . ' | Padam terus: ' . (string)($delete['message'] ?? ''),
+        'actor' => pv_actor(),
+    ]);
+
+    if (empty($delete['ok'])) {
+        return [
+            'ok' => false,
+            'message' => $archiveError . ' Padam terus juga gagal: ' . (string)($delete['message'] ?? ''),
+            'remote_file' => $filename,
+            'deleted_without_archive' => false,
+            'archive_error' => $archiveError,
+        ];
+    }
+
+    return [
+        'ok' => true,
+        'message' => 'Arkib gagal, tetapi fail tidak dipilih berjaya dipadam terus dari SFTP.',
+        'remote_file' => $filename,
+        'deleted_without_archive' => true,
+        'archive_error' => $archiveError,
     ];
 }
 
@@ -626,12 +677,16 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
             $success = [];
             $failed = [];
             $archives = [];
+            $deletedWithoutArchive = [];
             foreach ($candidates as $candidate) {
-                $result = pv_archive_then_delete($candidate, $matrik, $config);
+                $result = pv_cleanup_unselected_file($candidate, $matrik, $config);
                 if (!empty($result['ok'])) {
                     $success[] = $candidate;
                     if (!empty($result['archive_file'])) {
                         $archives[] = (string)$result['archive_file'];
+                    }
+                    if (!empty($result['deleted_without_archive'])) {
+                        $deletedWithoutArchive[] = $candidate;
                     }
                 } else {
                     $failed[$candidate] = (string)($result['message'] ?? 'Gagal.');
@@ -654,24 +709,35 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
                     if (is_array($liveFile)) {
                         $liveName = trim((string)($liveFile['filename'] ?? ''));
                         if ($liveName !== '') {
-                            $liveNames[strtolower($liveName)] = true;
+                            $liveNames[$liveName] = true;
                         }
                     }
                 }
                 foreach ($success as $index => $deletedName) {
-                    if (isset($liveNames[strtolower($deletedName)])) {
+                    if (isset($liveNames[$deletedName])) {
                         unset($success[$index]);
-                        $failed[$deletedName] = 'Fail masih wujud dalam SFTP selepas arahan padam. Cuba Arkib & Padam semula.';
+                        $failed[$deletedName] = 'Fail masih wujud dalam SFTP selepas arahan padam. Cuba Bersihkan semula.';
                     }
                 }
                 $success = array_values($success);
             }
 
+            $deletedWithoutArchive = array_values(array_intersect($deletedWithoutArchive, $success));
             $remaining = array_values(array_keys($failed));
             $cleanupStatus = $remaining ? 'partial' : 'done';
             $name = trim((string)($_POST['nama'] ?? ''));
+            $archivedDeletedCount = max(0, count($success) - count($deletedWithoutArchive));
             $summary = 'Gambar pilihan dijadikan ' . $standardFile . '. '
-                . count($success) . ' fail lama berjaya diarkib dan dipadam.';
+                . count($success) . ' fail lama berjaya dibersihkan';
+            if ($success) {
+                $summary .= ' (' . $archivedDeletedCount . ' diarkib dan dipadam';
+                if ($deletedWithoutArchive) {
+                    $summary .= ', ' . count($deletedWithoutArchive) . ' dipadam tanpa arkib';
+                }
+                $summary .= ').';
+            } else {
+                $summary .= '.';
+            }
             if ($remaining) {
                 $summary .= ' ' . count($remaining) . ' fail masih belum berjaya: ' . implode('; ', array_map(
                     static fn(string $file, string $reason): string => $file . ' — ' . $reason,
@@ -739,15 +805,19 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
             $success = [];
             $failed = [];
             $archives = [];
+            $deletedWithoutArchive = [];
             foreach (array_values(array_unique(array_map('strval', $candidates))) as $candidate) {
-                if ($candidate === '' || strcasecmp($candidate, $standardFile) === 0) {
+                if ($candidate === '' || $candidate === $standardFile) {
                     continue;
                 }
-                $result = pv_archive_then_delete($candidate, $matrik, $config);
+                $result = pv_cleanup_unselected_file($candidate, $matrik, $config);
                 if (!empty($result['ok'])) {
                     $success[] = $candidate;
                     if (!empty($result['archive_file'])) {
                         $archives[] = (string)$result['archive_file'];
+                    }
+                    if (!empty($result['deleted_without_archive'])) {
+                        $deletedWithoutArchive[] = $candidate;
                     }
                 } else {
                     $failed[$candidate] = (string)($result['message'] ?? 'Gagal.');
@@ -770,12 +840,12 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
                     if (is_array($liveFile)) {
                         $liveName = trim((string)($liveFile['filename'] ?? ''));
                         if ($liveName !== '') {
-                            $liveNames[strtolower($liveName)] = true;
+                            $liveNames[$liveName] = true;
                         }
                     }
                 }
                 foreach ($success as $index => $deletedName) {
-                    if (isset($liveNames[strtolower($deletedName)])) {
+                    if (isset($liveNames[$deletedName])) {
                         unset($success[$index]);
                         $failed[$deletedName] = 'Fail masih wujud dalam SFTP selepas arahan padam.';
                     }
@@ -783,9 +853,20 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
                 $success = array_values($success);
             }
 
+            $deletedWithoutArchive = array_values(array_intersect($deletedWithoutArchive, $success));
             $remaining = array_values(array_keys($failed));
             $cleanupStatus = $remaining ? 'partial' : 'done';
-            $summary = count($success) . ' fail diarkib dan dipadam.';
+            $archivedDeletedCount = max(0, count($success) - count($deletedWithoutArchive));
+            $summary = count($success) . ' fail lama berjaya dibersihkan';
+            if ($success) {
+                $summary .= ' (' . $archivedDeletedCount . ' diarkib dan dipadam';
+                if ($deletedWithoutArchive) {
+                    $summary .= ', ' . count($deletedWithoutArchive) . ' dipadam tanpa arkib';
+                }
+                $summary .= ').';
+            } else {
+                $summary .= '.';
+            }
             if ($remaining) {
                 $summary .= ' ' . count($remaining) . ' fail belum berjaya: ' . implode('; ', array_map(
                     static fn(string $file, string $reason): string => $file . ' — ' . $reason,
@@ -866,7 +947,7 @@ foreach ($groups as $matrik => $files) {
     $filtered[$matrik] = $files;
 }
 
-$perPage = 20;
+$perPage = 10;
 $page = max(1, (int)($_GET['page'] ?? 1));
 $totalGroups = count($filtered);
 $totalPages = max(1, (int)ceil($totalGroups / $perPage));
@@ -876,7 +957,6 @@ $pageGroups = array_slice($filtered, ($page - 1) * $perPage, $perPage, true);
 $duplicateCount = count(array_filter($groups, static fn(array $items): bool => count($items) >= 2));
 $pendingCount = count(array_filter($reviews, static fn(array $row): bool => in_array((string)($row['cleanup_status'] ?? ''), ['pending', 'partial'], true)));
 $selectedCount = count($reviews);
-$scanVersion = rawurlencode((string)($manifest['scanned_at'] ?? ''));
 ?>
 <!DOCTYPE html>
 <html lang="ms">
@@ -886,14 +966,14 @@ $scanVersion = rawurlencode((string)($manifest['scanned_at'] ?? ''));
 <title>Semakan Versi Gambar MIS | Zurie</title>
 <style>
 :root{--blue:#2563eb;--green:#16a34a;--yellow:#d97706;--red:#dc2626;--ink:#0f172a;--muted:#64748b;--line:#dbe3ef;--bg:#f3f7fc}
-*{box-sizing:border-box}body{margin:0;background:var(--bg);font-family:Arial,sans-serif;color:var(--ink)}.wrap{max-width:1450px;margin:24px auto;padding:0 16px 50px}.card{background:#fff;border:1px solid #e5eaf2;border-radius:18px;padding:18px;box-shadow:0 9px 28px rgba(15,23,42,.06);margin-bottom:16px}.head{display:flex;justify-content:space-between;gap:14px;align-items:flex-start;flex-wrap:wrap}.title{font-size:27px;margin:0 0 7px}.muted{color:var(--muted)}.breadcrumb{font-size:13px;display:flex;gap:7px;flex-wrap:wrap;margin-bottom:12px}.breadcrumb a{color:var(--blue);text-decoration:none;font-weight:700}.btn{border:0;border-radius:10px;padding:10px 14px;background:var(--blue);color:#fff;font-weight:800;text-decoration:none;cursor:pointer;display:inline-flex;align-items:center;gap:6px}.btn.secondary{background:#e2e8f0;color:var(--ink)}.btn.green{background:var(--green)}.btn.red{background:var(--red)}.btn:disabled{opacity:.55;cursor:not-allowed}.toolbar{display:flex;gap:9px;align-items:center;flex-wrap:wrap}.toolbar input,.toolbar select{border:1px solid #cbd5e1;border-radius:10px;padding:10px;background:#fff;min-width:190px}.stats{display:grid;grid-template-columns:repeat(4,minmax(0,1fr));gap:12px}.stat{border-radius:15px;padding:15px;border:1px solid var(--line);text-decoration:none;color:inherit}.stat b{font-size:25px;display:block;margin-bottom:5px}.stat.blue{background:#eff6ff}.stat.yellow{background:#fff7ed}.stat.green{background:#f0fdf4}.stat.red{background:#fef2f2}.notice{padding:13px 15px;border-radius:12px;margin-bottom:15px;font-weight:700}.notice.ok{background:#dcfce7;color:#166534}.notice.bad{background:#fee2e2;color:#991b1b}.group{border:2px solid #e2e8f0;border-radius:18px;background:#fff;margin-bottom:18px;overflow:hidden}.group.pending{border-color:#f59e0b}.group.selected{border-color:#22c55e}.group-head{display:flex;justify-content:space-between;gap:12px;align-items:center;padding:14px 16px;background:#f8fafc;flex-wrap:wrap}.group-head h2{margin:0;font-size:19px}.badge{display:inline-block;padding:5px 9px;border-radius:999px;font-size:12px;font-weight:900}.badge.yellow{background:#ffedd5;color:#9a3412}.badge.green{background:#dcfce7;color:#166534}.badge.red{background:#fee2e2;color:#991b1b}.photos{display:flex;flex-wrap:wrap;align-items:flex-start;gap:14px;padding:16px}.photo{flex:0 1 245px;max-width:285px;min-width:220px}.photo{border:1px solid var(--line);border-radius:14px;padding:10px;background:#fff;position:relative}.photo.selected-source{outline:3px solid #22c55e}.preview{width:100%;height:245px;object-fit:contain;background:linear-gradient(45deg,#eef2f7 25%,transparent 25%),linear-gradient(-45deg,#eef2f7 25%,transparent 25%),linear-gradient(45deg,transparent 75%,#eef2f7 75%),linear-gradient(-45deg,transparent 75%,#eef2f7 75%);background-size:20px 20px;background-position:0 0,0 10px,10px -10px,-10px 0;border-radius:10px}.meta{font-size:12px;line-height:1.55;color:#475569;margin-top:9px;word-break:break-word}.filename{font-weight:900;color:#0f172a}.radio{display:flex;align-items:center;gap:7px;margin-top:9px;font-weight:800}.warning{font-size:12px;color:#b45309;background:#fff7ed;padding:7px;border-radius:8px;margin-top:7px}.group-action{padding:0 16px 16px;display:flex;gap:10px;align-items:center;flex-wrap:wrap}.report-box{background:#fff7ed;border:1px solid #fed7aa;border-radius:12px;padding:11px;font-size:13px;line-height:1.55;flex:1;min-width:260px}.pagination{display:flex;gap:7px;flex-wrap:wrap;justify-content:center;margin:20px 0}.pagination a,.pagination span{padding:8px 11px;border-radius:9px;background:#fff;border:1px solid var(--line);text-decoration:none;color:var(--ink)}.pagination .active{background:var(--blue);color:#fff}.empty{text-align:center;padding:45px 15px;color:var(--muted)}.howto{display:grid;grid-template-columns:repeat(3,minmax(0,1fr));gap:10px}.step{background:#eff6ff;border:1px solid #bfdbfe;border-radius:12px;padding:12px}.exts{display:flex;gap:6px;flex-wrap:wrap;margin-top:8px}.unmatched{max-height:180px;overflow:auto;background:#fff7ed;border:1px solid #fed7aa;border-radius:10px;padding:10px;font-size:12px;line-height:1.6}code{background:#f1f5f9;border-radius:5px;padding:2px 5px}@media(max-width:850px){.howto{grid-template-columns:1fr}}@media(max-width:850px){.stats{grid-template-columns:repeat(2,minmax(0,1fr))}.preview{height:220px}}@media(max-width:520px){.stats{grid-template-columns:1fr}.toolbar input,.toolbar select{width:100%;min-width:0}.btn{justify-content:center}.photo{flex-basis:100%;max-width:none;min-width:0}}
+*{box-sizing:border-box}body{margin:0;background:var(--bg);font-family:Arial,sans-serif;color:var(--ink)}.wrap{max-width:1450px;margin:24px auto;padding:0 16px 50px}.card{background:#fff;border:1px solid #e5eaf2;border-radius:18px;padding:18px;box-shadow:0 9px 28px rgba(15,23,42,.06);margin-bottom:16px}.head{display:flex;justify-content:space-between;gap:14px;align-items:flex-start;flex-wrap:wrap}.title{font-size:27px;margin:0 0 7px}.muted{color:var(--muted)}.breadcrumb{font-size:13px;display:flex;gap:7px;flex-wrap:wrap;margin-bottom:12px}.breadcrumb a{color:var(--blue);text-decoration:none;font-weight:700}.btn{border:0;border-radius:10px;padding:10px 14px;background:var(--blue);color:#fff;font-weight:800;text-decoration:none;cursor:pointer;display:inline-flex;align-items:center;gap:6px}.btn.secondary{background:#e2e8f0;color:var(--ink)}.btn.green{background:var(--green)}.btn.red{background:var(--red)}.btn:disabled{opacity:.55;cursor:not-allowed}.toolbar{display:flex;gap:9px;align-items:center;flex-wrap:wrap}.toolbar input,.toolbar select{border:1px solid #cbd5e1;border-radius:10px;padding:10px;background:#fff;min-width:190px}.stats{display:grid;grid-template-columns:repeat(4,minmax(0,1fr));gap:12px}.stat{border-radius:15px;padding:15px;border:1px solid var(--line);text-decoration:none;color:inherit}.stat b{font-size:25px;display:block;margin-bottom:5px}.stat.blue{background:#eff6ff}.stat.yellow{background:#fff7ed}.stat.green{background:#f0fdf4}.stat.red{background:#fef2f2}.notice{padding:13px 15px;border-radius:12px;margin-bottom:15px;font-weight:700}.notice.ok{background:#dcfce7;color:#166534}.notice.bad{background:#fee2e2;color:#991b1b}.group{border:2px solid #e2e8f0;border-radius:18px;background:#fff;margin-bottom:18px;overflow:hidden}.group.pending{border-color:#f59e0b}.group.selected{border-color:#22c55e}.group-head{display:flex;justify-content:space-between;gap:12px;align-items:center;padding:14px 16px;background:#f8fafc;flex-wrap:wrap}.group-head h2{margin:0;font-size:19px}.badge{display:inline-block;padding:5px 9px;border-radius:999px;font-size:12px;font-weight:900}.badge.yellow{background:#ffedd5;color:#9a3412}.badge.green{background:#dcfce7;color:#166534}.badge.red{background:#fee2e2;color:#991b1b}.photos{display:flex;flex-wrap:wrap;align-items:flex-start;gap:12px;padding:16px}.photo{flex:0 1 178px;max-width:190px;min-width:160px}.photo{border:1px solid var(--line);border-radius:14px;padding:9px;background:#fff;position:relative}.photo.selected-source{outline:3px solid #22c55e}.preview-link{display:block;border-radius:10px;overflow:hidden;background:#f8fafc;text-decoration:none}.preview{display:block;width:100%;height:205px;object-fit:contain;background:linear-gradient(45deg,#eef2f7 25%,transparent 25%),linear-gradient(-45deg,#eef2f7 25%,transparent 25%),linear-gradient(45deg,transparent 75%,#eef2f7 75%),linear-gradient(-45deg,transparent 75%,#eef2f7 75%);background-size:20px 20px;background-position:0 0,0 10px,10px -10px,-10px 0}.preview-link:hover .preview{filter:brightness(.96)}.meta{font-size:12px;line-height:1.55;color:#475569;margin-top:9px;word-break:break-word}.filename{font-weight:900;color:#0f172a}.radio{display:flex;align-items:center;gap:7px;margin-top:9px;font-weight:800}.warning{font-size:12px;color:#b45309;background:#fff7ed;padding:7px;border-radius:8px;margin-top:7px}.group-action{padding:0 16px 16px;display:flex;gap:10px;align-items:center;flex-wrap:wrap}.report-box{background:#fff7ed;border:1px solid #fed7aa;border-radius:12px;padding:11px;font-size:13px;line-height:1.55;flex:1;min-width:260px}.pagination{display:flex;gap:7px;flex-wrap:wrap;justify-content:center;margin:20px 0}.pagination a,.pagination span{padding:8px 11px;border-radius:9px;background:#fff;border:1px solid var(--line);text-decoration:none;color:var(--ink)}.pagination .active{background:var(--blue);color:#fff}.empty{text-align:center;padding:45px 15px;color:var(--muted)}.howto{display:grid;grid-template-columns:repeat(3,minmax(0,1fr));gap:10px}.step{background:#eff6ff;border:1px solid #bfdbfe;border-radius:12px;padding:12px}.exts{display:flex;gap:6px;flex-wrap:wrap;margin-top:8px}.unmatched{max-height:180px;overflow:auto;background:#fff7ed;border:1px solid #fed7aa;border-radius:10px;padding:10px;font-size:12px;line-height:1.6}code{background:#f1f5f9;border-radius:5px;padding:2px 5px}@media(max-width:850px){.howto{grid-template-columns:1fr}}@media(max-width:850px){.stats{grid-template-columns:repeat(2,minmax(0,1fr))}.preview{height:195px}}@media(max-width:520px){.stats{grid-template-columns:1fr}.toolbar input,.toolbar select{width:100%;min-width:0}.btn{justify-content:center}.photo{flex-basis:100%;max-width:none;min-width:0}}
 </style>
 </head>
 <body><div class="wrap">
 <div class="card">
 <nav class="breadcrumb"><a href="/zurie/">Dashboard</a><span>›</span><a href="/zurie/pages/photo_audit.php">Audit Gambar MIS</a><span>›</span><strong>Versi Gambar SFTP</strong></nav>
 <div class="head">
-<div><h1 class="title">Semakan Versi Gambar MIS</h1><div class="muted">Pilih gambar terbaik. Sistem convert kepada JPG 413×531 dan simpan sebagai <b>NOMATRIK.jpg</b>. Fail lain boleh diarkib ke folder Zurie dan dipadam terus dari SFTP selepas pengesahan.</div></div>
+<div><h1 class="title">Semakan Versi Gambar MIS</h1><div class="muted">Pilih gambar terbaik. Sistem convert kepada JPG 413×531 dan simpan sebagai <b>NOMATRIK.jpg</b>. Fail lain cuba diarkib dahulu; jika arkib gagal, fail tidak dipilih akan dipadam terus dari SFTP.</div></div>
 <div class="toolbar">
 <form method="post" onsubmit="return confirm('Scan semua fail gambar dalam SFTP MIS sekarang? Proses mungkin mengambil sedikit masa.');">
 <input type="hidden" name="csrf" value="<?= pv_h($csrf) ?>"><input type="hidden" name="action" value="scan">
@@ -912,7 +992,7 @@ $scanVersion = rawurlencode((string)($manifest['scanned_at'] ?? ''));
 <div class="howto">
 <div class="step"><b>1. Scan SFTP</b><br><span class="muted">Klik butang Scan SFTP untuk membaca semua fail JPG, JPEG dan PNG. Fail dengan No. Matrik sama akan dikumpulkan walaupun extension berbeza.</span></div>
 <div class="step"><b>2. Buka 2+ versi</b><br><span class="muted">Klik kad oren. Semua fail bagi No. Matrik sama akan muncul sebelah-menyebelah.</span></div>
-<div class="step"><b>3. Pilih gambar</b><br><span class="muted">Tanda satu gambar dan klik Pilih, Arkib & Bersihkan. Sistem cipta NOMATRIK.jpg, arkib semua versi lama dan terus padamkannya dari SFTP.</span></div>
+<div class="step"><b>3. Pilih gambar</b><br><span class="muted">Tanda satu gambar dan klik Pilih & Bersihkan. Sistem cipta NOMATRIK.jpg, cuba arkib versi lama, kemudian memadam semua fail yang tidak dipilih.</span></div>
 </div>
 <div class="exts">
 <?php foreach ($extensionCounts as $ext => $count): ?><span class="badge yellow"><?= pv_h(strtoupper($ext)) ?>: <?= (int)$count ?></span><?php endforeach; ?>
@@ -940,7 +1020,7 @@ $scanVersion = rawurlencode((string)($manifest['scanned_at'] ?? ''));
 </select>
 <button class="btn" type="submit">Tapis</button>
 <a class="btn secondary" href="/zurie/pages/photo_versions.php">Reset</a>
-<span class="muted"><?= $totalGroups ?> kumpulan · <?= $perPage ?> pelajar setiap halaman</span>
+<span class="muted"><?= $totalGroups ?> kumpulan · <?= $perPage ?> pelajar setiap halaman · thumbnail ringan, klik untuk gambar asal</span>
 </form>
 </div>
 
@@ -960,9 +1040,9 @@ $scanVersion = rawurlencode((string)($manifest['scanned_at'] ?? ''));
     $cleanupComplete = $review
         && in_array($cleanupStatus, ['done', 'none'], true)
         && count($files) === 1
-        && strcasecmp((string)($files[0]['filename'] ?? ''), $matrik . '.jpg') === 0;
+        && (string)($files[0]['filename'] ?? '') === $matrik . '.jpg';
 ?>
-<form class="group <?= pv_h($groupClass) ?>" method="post" onsubmit="return confirm('Gunakan gambar pilihan sebagai <?= pv_h($matrik) ?>.jpg? Semua versi lain akan diarkib dalam Zurie dan dipadam dari SFTP.');">
+<form class="group <?= pv_h($groupClass) ?>" method="post" onsubmit="return confirm('Gunakan gambar pilihan sebagai <?= pv_h($matrik) ?>.jpg? Semua versi lain akan cuba diarkib. Jika arkib gagal, fail tidak dipilih tetap akan dipadam dari SFTP.');">
 <input type="hidden" name="csrf" value="<?= pv_h($csrf) ?>"><input type="hidden" name="action" value="select"><input type="hidden" name="matrik" value="<?= pv_h($matrik) ?>"><input type="hidden" name="nama" value="<?= pv_h($name) ?>">
 <div class="group-head">
 <div><h2><?= pv_h($matrik) ?><?= $name !== '' ? ' — ' . pv_h($name) : '' ?></h2><span class="muted"><?= count($files) ?> fail gambar ditemui · dipaparkan sebelah-menyebelah</span></div>
@@ -977,14 +1057,18 @@ $scanVersion = rawurlencode((string)($manifest['scanned_at'] ?? ''));
 <div class="photos">
 <?php foreach ($files as $file):
     $filename = (string)$file['filename'];
-    $isStandard = strcasecmp($filename, $matrik . '.jpg') === 0;
+    $isStandard = $filename === $matrik . '.jpg';
     $isSelectedSource = ($selectedSource !== '' && hash_equals($selectedSource, $filename))
         || ($cleanupComplete && $isStandard);
-    $fileVersion = rawurlencode($scanVersion . '-' . (string)($file['size'] ?? 0) . '-' . (string)($file['modified'] ?? ''));
-    $thumb = '/zurie/api/mis_photo_version.php?file=' . rawurlencode($filename) . '&v=' . $fileVersion;
+    // Kekalkan cache selagi saiz/tarikh fail remote tidak berubah.
+    $fileVersion = rawurlencode((string)($file['size'] ?? 0) . '-' . (string)($file['modified'] ?? ''));
+    $thumb = '/zurie/api/mis_photo_version.php?mode=thumb&file=' . rawurlencode($filename) . '&v=' . $fileVersion;
+    $full = '/zurie/api/mis_photo_version.php?mode=full&file=' . rawurlencode($filename) . '&v=' . $fileVersion;
 ?>
 <label class="photo <?= $isSelectedSource ? 'selected-source' : '' ?>">
-<img class="preview" loading="lazy" src="<?= pv_h($thumb) ?>" alt="<?= pv_h($filename) ?>" onerror="this.style.opacity='.25';this.alt='Preview gagal';">
+<a class="preview-link" href="<?= pv_h($full) ?>" target="_blank" rel="noopener" title="Klik untuk lihat gambar asal">
+<img class="preview" loading="lazy" decoding="async" fetchpriority="low" src="<?= pv_h($thumb) ?>" alt="<?= pv_h($filename) ?>" onerror="this.style.opacity='.25';this.alt='Preview gagal';">
+</a>
 <div class="meta"><div class="filename"><?= pv_h($filename) ?></div><div><?= strtoupper(pv_h((string)$file['extension'])) ?> · <?= pv_h(pv_format_bytes((int)$file['size'])) ?></div><div><?= pv_h((string)($file['modified'] ?: 'Tarikh tidak tersedia')) ?></div><?php if ($isStandard): ?><span class="badge green">NAMA STANDARD MIS</span><?php endif; ?><?php if ($isSelectedSource): ?><span class="badge green">PILIHAN TERAKHIR</span><?php endif; ?></div>
 <?php if ($cleanupComplete && $isStandard): ?><div class="radio" style="color:#166534">✓ Gambar akhir dalam SFTP</div>
 <?php elseif (!empty($file['selectable'])): ?><div class="radio"><input type="radio" name="selected_file" value="<?= pv_h($filename) ?>" <?= $isSelectedSource ? 'checked' : '' ?>> Pilih gambar ini</div>
@@ -993,7 +1077,7 @@ $scanVersion = rawurlencode((string)($manifest['scanned_at'] ?? ''));
 <?php endforeach; ?>
 </div>
 <div class="group-action">
-<?php if (!$cleanupComplete): ?><button class="btn green" type="submit">✓ Pilih, Arkib & Bersihkan</button>
+<?php if (!$cleanupComplete): ?><button class="btn green" type="submit">✓ Pilih & Bersihkan</button>
 <?php else: ?><div class="notice ok" style="margin:0;flex:1">Selesai. Hanya <b><?= pv_h($matrik) ?>.jpg</b> tinggal dalam SFTP.</div><?php endif; ?>
 <?php if ($review): ?>
 <div class="report-box"><b>Dipilih:</b> <?= pv_h((string)$review['selected_source']) ?><br><b>Standard MIS:</b> <?= pv_h((string)$review['standard_file']) ?><br><b>Calon padam:</b> <?= $candidates ? pv_h(implode(', ', array_map('strval', $candidates))) : 'Tiada' ?><br><span class="muted"><?= pv_h((string)($review['selected_at'] ?? '')) ?> oleh <?= pv_h((string)($review['selected_by'] ?? '')) ?></span></div>
@@ -1001,10 +1085,10 @@ $scanVersion = rawurlencode((string)($manifest['scanned_at'] ?? ''));
 </div>
 </form>
 <?php if ($review && in_array($cleanupStatus, ['pending', 'partial'], true) && $candidates): ?>
-<form method="post" style="margin:-10px 0 18px;padding:0 16px;display:flex;justify-content:flex-end;gap:10px;align-items:center;flex-wrap:wrap" onsubmit="return confirm('ARKIB & PADAM <?= count($candidates) ?> fail lama untuk <?= pv_h($matrik) ?>? Sistem akan muat turun setiap fail ke folder arkib Zurie terlebih dahulu. Fail standard <?= pv_h($matrik) ?>.jpg tidak akan dipadam.');">
+<form method="post" style="margin:-10px 0 18px;padding:0 16px;display:flex;justify-content:flex-end;gap:10px;align-items:center;flex-wrap:wrap" onsubmit="return confirm('BERSIHKAN <?= count($candidates) ?> fail lama untuk <?= pv_h($matrik) ?>? Sistem cuba arkib dahulu. Jika arkib gagal, fail tidak dipilih akan dipadam terus. Fail standard <?= pv_h($matrik) ?>.jpg tidak akan dipadam.');">
 <input type="hidden" name="csrf" value="<?= pv_h($csrf) ?>"><input type="hidden" name="action" value="archive_delete"><input type="hidden" name="matrik" value="<?= pv_h($matrik) ?>">
 <span class="muted">Arkib: <code>/zurie/archive/sftp_photos/YYYY/MM/DD/<?= pv_h($matrik) ?>/</code></span>
-<button class="btn red" type="submit">🗄 Arkib & Padam <?= count($candidates) ?> Fail</button>
+<button class="btn red" type="submit">🧹 Bersihkan <?= count($candidates) ?> Fail</button>
 </form>
 <?php endif; ?>
 <?php endforeach; ?>
@@ -1015,5 +1099,5 @@ $scanVersion = rawurlencode((string)($manifest['scanned_at'] ?? ''));
 <?php if ($i === $page): ?><span class="active"><?= $i ?></span><?php else: ?><a href="?<?= pv_h(http_build_query($params)) ?>"><?= $i ?></a><?php endif; ?>
 <?php endfor; ?></nav><?php endif; ?>
 
-<div class="card"><b>Nota keselamatan:</b> Butang <b>Pilih, Arkib & Bersihkan</b> akan mencipta fail standard, kemudian memuat turun dan mengesahkan setiap versi lama ke folder arkib Zurie sebelum arahan padam dihantar ke SFTP. Jika arkib gagal, fail remote tidak dipadam. Fail standard <code>NOMATRIK.jpg</code> sentiasa dilindungi.</div>
+<div class="card"><b>Nota:</b> Sistem mencipta dan mengesahkan fail standard <code>NOMATRIK.jpg</code> terlebih dahulu. Selepas itu, semua versi yang tidak dipilih cuba diarkib. Jika arkib gagal, fail tersebut dipadam terus supaya tiada gambar pendua. Fail standard sentiasa dilindungi.</div>
 </div></body></html>

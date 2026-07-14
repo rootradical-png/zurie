@@ -27,3 +27,5 @@ node_modules/
 # Cached images pulled from legacy i-SIMS
 data/kokurikulum_assets/*
 !data/kokurikulum_assets/.htaccess
+# Runtime thumbnail/original cache for MIS photo versions
+data/photo_version_cache/
