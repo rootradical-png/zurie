@@ -2,7 +2,7 @@
 /**
  * Secure preview proxy for one MIS SFTP photo version.
  *
- * mode=thumb: cached lightweight JPEG thumbnail (160x210, quality 58).
+ * mode=thumb: cached ultra-light JPEG thumbnail (96x128, quality 42).
  * mode=full : cached original image for explicit click/open only.
  */
 declare(strict_types=1);
@@ -87,8 +87,8 @@ function mpv_create_thumbnail(string $sourceFile, string $thumbFile): bool
         return false;
     }
 
-    $canvasWidth = 160;
-    $canvasHeight = 210;
+    $canvasWidth = 96;
+    $canvasHeight = 128;
     $canvas = @imagecreatetruecolor($canvasWidth, $canvasHeight);
     if (!$canvas) {
         imagedestroy($source);
@@ -123,7 +123,7 @@ function mpv_create_thumbnail(string $sourceFile, string $thumbFile): bool
     }
 
     $tempFile = $thumbFile . '.part-' . bin2hex(random_bytes(3));
-    $written = @imagejpeg($canvas, $tempFile, 58);
+    $written = @imagejpeg($canvas, $tempFile, 42);
     imagedestroy($canvas);
     if (!$written || !is_file($tempFile) || (int)@filesize($tempFile) < 1) {
         @unlink($tempFile);
@@ -185,10 +185,12 @@ if (random_int(1, 100) === 1) {
     }
 }
 
-$cacheKey = hash('sha256', $filename . '|' . $version);
-$originalFile = $originalDir . DIRECTORY_SEPARATOR . $cacheKey . '.' . $extension;
-$thumbFile = $thumbDir . DIRECTORY_SEPARATOR . $cacheKey . '.jpg';
-$lockFile = $lockDir . DIRECTORY_SEPARATOR . $cacheKey . '.lock';
+$sourceCacheKey = hash('sha256', $filename . '|' . $version);
+$thumbProfile = '96x128-q42-v2';
+$thumbCacheKey = hash('sha256', $filename . '|' . $version . '|' . $thumbProfile);
+$originalFile = $originalDir . DIRECTORY_SEPARATOR . $sourceCacheKey . '.' . $extension;
+$thumbFile = $thumbDir . DIRECTORY_SEPARATOR . $thumbCacheKey . '.jpg';
+$lockFile = $lockDir . DIRECTORY_SEPARATOR . $sourceCacheKey . '.lock';
 
 $lock = @fopen($lockFile, 'c');
 if ($lock === false) {
