@@ -71,6 +71,43 @@ function pv_work_dir(): string
     return dirname(__DIR__) . '/data/photo_versions_work';
 }
 
+
+/**
+ * Cari salinan asal yang telah dicache oleh preview thumbnail.
+ * Cache hanya diterima apabila nama fail, saiz dan tarikh modified sepadan
+ * dengan baris manifest yang dipilih.
+ */
+function pv_cached_preview_source(string $filename, array $manifestRow): ?string
+{
+    $extension = strtolower((string)pathinfo($filename, PATHINFO_EXTENSION));
+    if (!in_array($extension, ['jpg', 'jpeg', 'png', 'webp', 'gif', 'bmp'], true)) {
+        return null;
+    }
+
+    $version = (string)($manifestRow['size'] ?? 0) . '-' . (string)($manifestRow['modified'] ?? '');
+    $cacheKey = hash('sha256', $filename . '|' . $version);
+    $cached = dirname(__DIR__) . '/data/photo_version_cache/original/' . $cacheKey . '.' . $extension;
+
+    clearstatcache(true, $cached);
+    if (!is_file($cached) || (int)@filesize($cached) < 1 || @getimagesize($cached) === false) {
+        return null;
+    }
+
+    return $cached;
+}
+
+/**
+ * Segarkan manifest daripada listing SFTP sebenar tanpa menggagalkan proses.
+ */
+function pv_refresh_live_manifest_quiet(array $config): array
+{
+    $scan = zurie_mis_sftp_list_photo_files($config);
+    if (!empty($scan['ok']) && is_array($scan['files'] ?? null)) {
+        pv_save_manifest($scan['files']);
+    }
+    return $scan;
+}
+
 function pv_archive_root(): string
 {
     return dirname(__DIR__) . '/archive/sftp_photos';
@@ -589,9 +626,31 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
             $sourceTemp = $workDir . DIRECTORY_SEPARATOR . $matrik . '_' . bin2hex(random_bytes(4)) . '.' . $sourceExt;
             $jpgTemp = $workDir . DIRECTORY_SEPARATOR . $matrik . '_' . bin2hex(random_bytes(4)) . '.jpg';
 
+            $sourceRecoveredFromCache = false;
             $download = zurie_mis_sftp_download_photo_file($selected, $sourceTemp, $config);
-            if (!$download['ok']) {
-                throw new RuntimeException('Gagal muat turun gambar pilihan: ' . (string)$download['message']);
+            if (empty($download['ok'])) {
+                // Manifest boleh menjadi lapuk apabila fail telah dipadam/ditukar nama
+                // selepas halaman dibuka. Gunakan cache preview yang sepadan supaya
+                // pilihan pengguna tidak hilang jika thumbnail sudah berjaya dipaparkan.
+                $cachedSource = pv_cached_preview_source($selected, $selectedRow);
+                if ($cachedSource !== null && @copy($cachedSource, $sourceTemp)) {
+                    clearstatcache(true, $sourceTemp);
+                    $sourceRecoveredFromCache = is_file($sourceTemp) && (int)@filesize($sourceTemp) > 0;
+                }
+
+                if (!$sourceRecoveredFromCache) {
+                    pv_refresh_live_manifest_quiet($config);
+                    @unlink($sourceTemp);
+
+                    if (!empty($download['missing'])) {
+                        throw new RuntimeException(
+                            'Fail pilihan ' . $selected . ' sudah tiada dalam SFTP. '
+                            . 'Senarai telah disegarkan; pilih semula gambar yang masih dipaparkan.'
+                        );
+                    }
+
+                    throw new RuntimeException('Gagal muat turun gambar pilihan: ' . (string)($download['message'] ?? 'Muat turun gagal.'));
+                }
             }
 
             $repair = zurie_photo_repair($sourceTemp, $jpgTemp, 413, 531, 90);
@@ -746,6 +805,9 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
                 ));
             } else {
                 $summary .= ' Kini hanya ' . $standardFile . ' tinggal dalam SFTP.';
+            }
+            if ($sourceRecoveredFromCache) {
+                $summary .= ' Gambar pilihan dipulihkan daripada cache preview kerana fail asal sudah tiada dalam SFTP.';
             }
             if ($archives) {
                 $summary .= ' Arkib: ' . dirname($archives[0]) . '/';

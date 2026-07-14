@@ -513,9 +513,29 @@ function zurie_mis_sftp_list_photo_files(?array $config = null): array
 }
 
 /**
+ * Kenal pasti ralat WinSCP/SFTP apabila fail remote memang sudah tiada.
+ */
+function zurie_mis_sftp_is_missing_file_error(string $message): bool
+{
+    $message = strtolower($message);
+    foreach ([
+        'no such file',
+        'no such file or directory',
+        'error code: 2',
+        "can't get attributes of file",
+        'cannot get attributes of file',
+    ] as $marker) {
+        if (str_contains($message, $marker)) {
+            return true;
+        }
+    }
+    return false;
+}
+
+/**
  * Download one file from the configured MIS photo directory.
  *
- * @return array{ok:bool,message:string,bytes?:int,remote_file?:string}
+ * @return array{ok:bool,message:string,bytes?:int,remote_file?:string,missing?:bool}
  */
 function zurie_mis_sftp_download_photo_file(string $remoteFilename, string $localFile, ?array $config = null): array
 {
@@ -547,7 +567,16 @@ function zurie_mis_sftp_download_photo_file(string $remoteFilename, string $loca
             'get -transfer=binary -resumesupport=off ' . zurie_mis_sftp_winscp_quote($remoteFile) . ' ' . zurie_mis_sftp_winscp_quote($localFile),
         ], $config);
         if (!$result['ok']) {
-            return ['ok' => false, 'message' => $result['message'], 'remote_file' => $remoteFile];
+            $message = (string)($result['message'] ?? 'Muat turun WinSCP gagal.');
+            if (zurie_mis_sftp_is_missing_file_error($message)) {
+                return [
+                    'ok' => false,
+                    'missing' => true,
+                    'message' => 'Fail ' . $remoteFilename . ' sudah tiada dalam SFTP.',
+                    'remote_file' => $remoteFile,
+                ];
+            }
+            return ['ok' => false, 'missing' => false, 'message' => $message, 'remote_file' => $remoteFile];
         }
     } else {
         $connected = zurie_mis_sftp_ssh2_connect($config);
@@ -617,7 +646,17 @@ function zurie_mis_sftp_delete_photo_file(string $remoteFilename, ?array $config
             'rm ' . zurie_mis_sftp_winscp_quote($remoteFile),
         ], $config);
         if (!$result['ok']) {
-            return ['ok' => false, 'message' => $result['message'], 'remote_file' => $remoteFile];
+            $message = (string)($result['message'] ?? 'Arahan padam WinSCP gagal.');
+            if (zurie_mis_sftp_is_missing_file_error($message)) {
+                // Operasi padam bersifat idempotent: fail yang sudah tiada dikira selesai.
+                return [
+                    'ok' => true,
+                    'already_missing' => true,
+                    'message' => 'Fail SFTP sudah tiada; tiada pembersihan tambahan diperlukan.',
+                    'remote_file' => $remoteFile,
+                ];
+            }
+            return ['ok' => false, 'message' => $message, 'remote_file' => $remoteFile];
         }
         return ['ok' => true, 'message' => 'Fail SFTP berjaya dipadam.', 'remote_file' => $remoteFile];
     }
