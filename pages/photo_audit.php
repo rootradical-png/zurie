@@ -775,6 +775,56 @@ function audit_workflow_state(array $row): array
 }
 
 /**
+ * Tentukan tiga isu utama yang perlu diberi perhatian.
+ * Setiap isu dikira secara bebas supaya seorang pelajar boleh berada
+ * dalam lebih daripada satu kategori.
+ *
+ * @return array{missing:bool,repair:bool,rfid:bool,reasons:array<int,string>}
+ */
+function audit_issue_flags(array $row): array
+{
+    $checked = trim((string)($row['checked_at'] ?? '')) !== '';
+    $exists = (int)($row['photo_exists'] ?? 0) === 1;
+    $quality = strtolower(trim((string)($row['quality_status'] ?? '')));
+    $background = strtolower(trim((string)($row['background_status'] ?? '')));
+
+    // Hanya sah dianggap tiada gambar selepas audit MIS telah dijalankan.
+    $missing = $checked && !$exists;
+
+    // Selaraskan dengan kiraan halaman REGISTER RFID MIS: cardno kosong.
+    $rfid = (int)($row['pg_active'] ?? 0) === 1
+        && trim((string)($row['cardno'] ?? '')) === '';
+
+    // Fokus kepada gambar yang memang perlu pembaikan/semakan visual.
+    $repair = $exists && (
+        $quality === 'repair'
+        || in_array($background, ['semak', 'tolak', 'gagal'], true)
+    );
+
+    $reasons = [];
+    if ($missing) {
+        $reasons[] = 'Gambar tidak ditemui dalam MIS.';
+    }
+    if ($repair) {
+        $reason = trim((string)($row['quality_reason'] ?? ''));
+        if ($reason === '') {
+            $reason = trim((string)($row['background_reason'] ?? ''));
+        }
+        $reasons[] = $reason !== '' ? $reason : 'Gambar memerlukan pembaikan.';
+    }
+    if ($rfid) {
+        $reasons[] = 'Kad RFID belum didaftarkan dalam MIS.';
+    }
+
+    return [
+        'missing' => $missing,
+        'repair' => $repair,
+        'rfid' => $rfid,
+        'reasons' => $reasons,
+    ];
+}
+
+/**
  * @param array<int,array<string,mixed>> $rows
  * @return array<string,int>
  */
@@ -799,6 +849,9 @@ function audit_compute_stats(array $rows): array
         'perlu_whatsapp' => 0,
         'sudah_whatsapp' => 0,
         'simple_missing' => 0,
+        'simple_repair' => 0,
+        'simple_rfid' => 0,
+        // Kekalkan key lama untuk keserasian dalaman.
         'simple_review' => 0,
         'simple_upload' => 0,
         'simple_review_total' => 0,
@@ -850,23 +903,24 @@ function audit_compute_stats(array $rows): array
             }
         }
 
-        $workflow = audit_workflow_state($row);
-        $workflowKey = (string)($workflow['key'] ?? 'review');
-        if ($workflowKey === 'missing') {
+        $issues = audit_issue_flags($row);
+        if ($issues['missing']) {
             $stats['simple_missing']++;
-        } elseif ($workflowKey === 'upload') {
-            $stats['simple_upload']++;
-            $stats['simple_review_total']++;
-        } elseif ($workflowKey === 'review') {
+        }
+        if ($issues['repair']) {
+            $stats['simple_repair']++;
             $stats['simple_review']++;
             $stats['simple_review_total']++;
-        } elseif ($workflowKey === 'card') {
-            $stats['simple_card']++;
-        } elseif ($workflowKey === 'completed') {
-            $stats['simple_completed']++;
         }
-        if ($workflowKey !== 'completed') {
+        if ($issues['rfid']) {
+            $stats['simple_rfid']++;
+            $stats['simple_card']++;
+        }
+
+        if ($issues['missing'] || $issues['repair'] || $issues['rfid']) {
             $stats['simple_attention']++;
+        } else {
+            $stats['simple_completed']++;
         }
     }
     return $stats;
@@ -1944,10 +1998,17 @@ function quality_badge(?string $status): array
 $messages = [];
 $errors = [];
 $filter = (string)($_GET['filter'] ?? 'attention');
+$filterAliases = [
+    'card' => 'rfid',
+    'review_all' => 'repair',
+    'review' => 'repair',
+    'completed' => 'all',
+];
+$filter = $filterAliases[$filter] ?? $filter;
 $allowedFilters = [
-    'attention', 'missing', 'review_all', 'review', 'upload', 'card', 'completed', 'all',
-    // Kekalkan pautan lama supaya bookmark atau URL terdahulu tidak rosak.
-    'quality_pending', 'good', 'repair', 'upload_new',
+    'attention', 'missing', 'repair', 'rfid', 'all',
+    // Kekalkan penapis teknikal lama untuk pautan/bookmark sedia ada.
+    'quality_pending', 'good', 'upload_new',
     'bg_pending', 'bg_ok', 'bg_review', 'bg_reject', 'bg_failed',
     'wa_pending', 'wa_sent', 'exists', 'unchecked',
 ];
@@ -2182,19 +2243,15 @@ try {
         $backgroundStatus = trim((string)($row['background_status'] ?? ''));
         $waContext = audit_whatsapp_context($row);
 
-        $workflowKey = (string)(audit_workflow_state($row)['key'] ?? 'review');
+        $issues = audit_issue_flags($row);
 
         return match ($filter) {
-            'attention' => $workflowKey !== 'completed',
-            'missing' => $workflowKey === 'missing',
-            'review_all' => in_array($workflowKey, ['review', 'upload'], true),
-            'review' => $workflowKey === 'review',
-            'upload' => $workflowKey === 'upload',
-            'card' => $workflowKey === 'card',
-            'completed' => $workflowKey === 'completed',
+            'attention' => $issues['missing'] || $issues['repair'] || $issues['rfid'],
+            'missing' => $issues['missing'],
+            'repair' => $issues['repair'],
+            'rfid' => $issues['rfid'],
             'quality_pending' => $exists && $quality === '',
             'good' => $quality === 'baik',
-            'repair' => $quality === 'repair',
             'upload_new' => $quality === 'upload_baru',
             'bg_pending' => $exists && $backgroundStatus === '',
             'bg_ok' => in_array($backgroundStatus, ['putih', 'hampir_putih'], true),
@@ -2281,7 +2338,7 @@ $resetAdvancedUrl = '?filter=attention';
 <title>Semakan Foto Kad Matrik | Zurie</title>
 <style>
 :root{--bg:#f5f7fb;--surface:#fff;--border:#e2e8f0;--text:#0f172a;--muted:#64748b;--navy:#173b67;--blue:#2563eb;--blue-soft:#eff6ff;--red:#b42318;--red-soft:#fff1f0;--amber:#9a6700;--amber-soft:#fff8e6;--green:#18794e;--green-soft:#ecfdf3;--purple:#6941c6;--purple-soft:#f4f3ff}
-*{box-sizing:border-box}body{margin:0;background:var(--bg);color:var(--text);font-family:Inter,"Segoe UI",Arial,sans-serif}.wrap{max-width:1240px;margin:28px auto;padding:0 18px}.panel{background:var(--surface);border:1px solid var(--border);border-radius:16px;padding:20px;margin-bottom:16px;box-shadow:0 5px 18px rgba(15,23,42,.04)}.breadcrumb{display:flex;gap:7px;align-items:center;font-size:13px;margin-bottom:14px;color:var(--muted)}.breadcrumb a{color:var(--blue);font-weight:700;text-decoration:none}.page-head{display:flex;align-items:flex-start;justify-content:space-between;gap:18px;flex-wrap:wrap}.page-title{margin:0 0 6px;font-size:27px;line-height:1.15;letter-spacing:-.02em}.subtitle{margin:0;color:var(--muted);font-size:14px}.head-actions,.inline-actions{display:flex;align-items:center;gap:8px;flex-wrap:wrap}.btn{appearance:none;border:0;border-radius:9px;padding:10px 13px;background:var(--blue);color:#fff;font-weight:750;font-size:13px;line-height:1;text-decoration:none;cursor:pointer;display:inline-flex;align-items:center;justify-content:center;gap:6px}.btn:hover{filter:brightness(.97)}.btn.secondary{background:#eef2f7;color:#1e293b}.btn.subtle{background:#fff;color:#334155;border:1px solid var(--border)}.btn.danger{background:#b42318}.btn.warn{background:#b45309}.btn.good{background:#15803d}.btn.repair{background:#6d28d9}.btn.upload{background:#c2410c}.btn.wa{background:#15803d}.btn.small{padding:7px 9px;font-size:11px}.alert{border-radius:11px;padding:11px 13px;margin-bottom:12px;font-size:13px}.alert.ok{background:var(--green-soft);color:var(--green);border:1px solid #bbf7d0}.alert.err{background:var(--red-soft);color:var(--red);border:1px solid #fecaca}.summary-grid{display:grid;grid-template-columns:repeat(3,minmax(0,1fr));gap:12px}.summary-card{display:block;text-decoration:none;color:inherit;border:1px solid var(--border);border-radius:14px;padding:16px;background:#fff;transition:.15s}.summary-card:hover{transform:translateY(-1px);border-color:#a8b7ca}.summary-card.active{box-shadow:0 0 0 2px rgba(37,99,235,.12)}.summary-card span{display:block;color:var(--muted);font-size:12px;font-weight:700}.summary-card b{display:block;font-size:27px;margin:7px 0 3px}.summary-card small{color:var(--muted)}.summary-card.missing{border-top:3px solid #d92d20}.summary-card.review{border-top:3px solid #f59e0b}.summary-card.card-status{border-top:3px solid #7c3aed}.progress-note{margin-top:13px;color:var(--muted);font-size:12px}.filters{display:grid;grid-template-columns:minmax(190px,.8fr) minmax(280px,1.5fr) minmax(170px,.7fr) auto auto;gap:10px;align-items:end}.field{display:flex;flex-direction:column;gap:6px}.field label{font-size:11px;text-transform:uppercase;letter-spacing:.04em;font-weight:800;color:#475569}.field input,.field select{width:100%;height:40px;border:1px solid #cbd5e1;border-radius:9px;padding:0 11px;background:#fff;color:var(--text)}.result-line{margin-top:12px;color:var(--muted);font-size:12px}.table-panel{padding:0;overflow:hidden}.table-scroll{overflow:auto}table{width:100%;border-collapse:collapse;min-width:980px}th{padding:12px 14px;background:#f8fafc;color:#475569;text-transform:uppercase;letter-spacing:.035em;font-size:11px;text-align:left;border-bottom:1px solid var(--border)}td{padding:14px;border-bottom:1px solid var(--border);vertical-align:top;font-size:13px}tbody tr:hover{background:#fbfdff}.photo{width:68px;height:86px;border-radius:10px;object-fit:cover;border:1px solid #cbd5e1;background:#f8fafc}.photo-empty{width:68px;height:86px;border-radius:10px;border:1px dashed #cbd5e1;background:#f8fafc;display:grid;place-items:center;color:#94a3b8;font-size:11px;text-align:center;padding:6px}.student-name{display:block;font-weight:800;margin-bottom:4px}.student-meta{display:block;color:var(--muted);font-size:11px;line-height:1.55}.state{display:inline-flex;align-items:center;border-radius:999px;padding:6px 9px;font-size:11px;font-weight:800;white-space:nowrap}.state-missing{background:var(--red-soft);color:var(--red)}.state-review{background:var(--amber-soft);color:var(--amber)}.state-upload{background:var(--blue-soft);color:#1d4ed8}.state-card{background:var(--purple-soft);color:var(--purple)}.state-completed{background:var(--green-soft);color:var(--green)}.reason{max-width:310px;line-height:1.5}.card-lines{display:grid;gap:5px}.card-line{display:flex;align-items:center;gap:6px}.card-line strong{font-size:11px;min-width:54px;color:#475569}.value-ok{font-family:ui-monospace,SFMono-Regular,Consolas,monospace;font-size:11px;color:#166534}.value-missing{font-size:11px;color:var(--red);font-weight:750}.row-actions{display:flex;gap:7px;flex-wrap:wrap;align-items:flex-start}.row-details,.row-more{position:relative}.row-details>summary,.row-more>summary{cursor:pointer;list-style:none;border-radius:8px;padding:7px 9px;background:#f1f5f9;color:#334155;font-size:11px;font-weight:800}.row-details>summary::-webkit-details-marker,.row-more>summary::-webkit-details-marker{display:none}.details-box,.more-box{margin-top:7px;padding:10px;border:1px solid var(--border);border-radius:10px;background:#f8fafc;min-width:230px;color:#475569;font-size:11px;line-height:1.6}.more-box{display:flex;gap:6px;flex-wrap:wrap}.more-box button{margin:0}.muted{color:var(--muted)}.settings{padding:0;overflow:hidden}.settings>summary{cursor:pointer;list-style:none;padding:16px 20px;font-weight:800;color:var(--navy);display:flex;justify-content:space-between;align-items:center}.settings>summary::-webkit-details-marker{display:none}.settings>summary:after{content:'Buka';font-size:11px;color:var(--blue);background:var(--blue-soft);padding:5px 8px;border-radius:999px}.settings[open]>summary:after{content:'Tutup'}.settings-body{padding:0 20px 20px;border-top:1px solid var(--border)}.settings-section{padding-top:17px}.settings-section+.settings-section{margin-top:17px;border-top:1px solid var(--border)}.settings-section h3{margin:0 0 5px;font-size:15px}.settings-section p{margin:0 0 12px;color:var(--muted);font-size:12px}.source-row{display:grid;grid-template-columns:repeat(4,minmax(0,1fr));gap:8px;margin-top:12px}.source-item{border:1px solid var(--border);border-radius:10px;padding:10px;background:#f8fafc}.source-item span{display:block;color:var(--muted);font-size:10px}.source-item b{font-size:19px}.guide-row{display:grid;grid-template-columns:repeat(3,minmax(0,1fr));gap:8px}.guide-item{border:1px solid var(--border);border-radius:10px;padding:10px;font-size:12px;color:#475569}.auto-progress{margin-top:12px;padding:12px;border:1px solid #bfdbfe;background:#fff;border-radius:11px}.auto-progress[hidden]{display:none}.progress-head{display:flex;justify-content:space-between;gap:8px;margin-bottom:8px;font-size:12px}.progress-track{height:9px;border-radius:999px;background:#e2e8f0;overflow:hidden}.progress-fill{height:100%;width:0;background:#2563eb;transition:width .2s}.auto-counts{display:grid;grid-template-columns:repeat(5,1fr);gap:6px;margin-top:9px}.auto-count{padding:7px;border-radius:8px;text-align:center;background:#f8fafc;font-size:10px}.auto-count b{display:block;font-size:15px;margin-top:2px}.pagination-wrap{display:flex;justify-content:space-between;gap:12px;align-items:center;flex-wrap:wrap;padding:15px 18px}.pagination{display:flex;gap:5px;align-items:center;flex-wrap:wrap}.page-link{display:inline-flex;min-width:32px;height:32px;align-items:center;justify-content:center;padding:0 8px;border-radius:8px;background:#e2e8f0;color:#0f172a;text-decoration:none;font-weight:800;font-size:12px}.page-link.active{background:var(--blue);color:#fff}.page-link.disabled{opacity:.4;pointer-events:none}.small{font-size:11px;color:var(--muted)}.wa-line{display:flex;gap:5px;align-items:center;margin-top:6px}.wa-box{width:17px;height:17px;border:1px solid #94a3b8;border-radius:4px;background:#fff;display:inline-flex;align-items:center;justify-content:center;font-size:12px;font-weight:900;color:#16a34a}.wa-box.sent{border-color:#16a34a;background:#dcfce7}.wa-cancel{border:0;background:#fee2e2;color:#991b1b;border-radius:999px;width:17px;height:17px;cursor:pointer;font-weight:900;font-size:11px;padding:0}.wa-time{font-size:10px;color:#64748b}
+*{box-sizing:border-box}body{margin:0;background:var(--bg);color:var(--text);font-family:Inter,"Segoe UI",Arial,sans-serif}.wrap{max-width:1240px;margin:28px auto;padding:0 18px}.panel{background:var(--surface);border:1px solid var(--border);border-radius:16px;padding:20px;margin-bottom:16px;box-shadow:0 5px 18px rgba(15,23,42,.04)}.breadcrumb{display:flex;gap:7px;align-items:center;font-size:13px;margin-bottom:14px;color:var(--muted)}.breadcrumb a{color:var(--blue);font-weight:700;text-decoration:none}.page-head{display:flex;align-items:flex-start;justify-content:space-between;gap:18px;flex-wrap:wrap}.page-title{margin:0 0 6px;font-size:27px;line-height:1.15;letter-spacing:-.02em}.subtitle{margin:0;color:var(--muted);font-size:14px}.head-actions,.inline-actions{display:flex;align-items:center;gap:8px;flex-wrap:wrap}.btn{appearance:none;border:0;border-radius:9px;padding:10px 13px;background:var(--blue);color:#fff;font-weight:750;font-size:13px;line-height:1;text-decoration:none;cursor:pointer;display:inline-flex;align-items:center;justify-content:center;gap:6px}.btn:hover{filter:brightness(.97)}.btn.secondary{background:#eef2f7;color:#1e293b}.btn.subtle{background:#fff;color:#334155;border:1px solid var(--border)}.btn.danger{background:#b42318}.btn.warn{background:#b45309}.btn.good{background:#15803d}.btn.repair{background:#6d28d9}.btn.upload{background:#c2410c}.btn.wa{background:#15803d}.btn.small{padding:7px 9px;font-size:11px}.alert{border-radius:11px;padding:11px 13px;margin-bottom:12px;font-size:13px}.alert.ok{background:var(--green-soft);color:var(--green);border:1px solid #bbf7d0}.alert.err{background:var(--red-soft);color:var(--red);border:1px solid #fecaca}.summary-grid{display:grid;grid-template-columns:repeat(3,minmax(0,1fr));gap:12px}.summary-card{display:block;text-decoration:none;color:inherit;border:1px solid var(--border);border-radius:14px;padding:16px;background:#fff;transition:.15s}.summary-card:hover{transform:translateY(-1px);border-color:#a8b7ca}.summary-card.active{box-shadow:0 0 0 2px rgba(37,99,235,.12)}.summary-card span{display:block;color:var(--muted);font-size:12px;font-weight:700}.summary-card b{display:block;font-size:27px;margin:7px 0 3px}.summary-card small{color:var(--muted)}.summary-card.missing{border-top:3px solid #d92d20}.summary-card.review{border-top:3px solid #f59e0b}.summary-card.rfid{border-top:3px solid #2563eb}.progress-note{margin-top:13px;color:var(--muted);font-size:12px}.filters{display:grid;grid-template-columns:minmax(190px,.8fr) minmax(280px,1.5fr) minmax(170px,.7fr) auto auto;gap:10px;align-items:end}.field{display:flex;flex-direction:column;gap:6px}.field label{font-size:11px;text-transform:uppercase;letter-spacing:.04em;font-weight:800;color:#475569}.field input,.field select{width:100%;height:40px;border:1px solid #cbd5e1;border-radius:9px;padding:0 11px;background:#fff;color:var(--text)}.result-line{margin-top:12px;color:var(--muted);font-size:12px}.table-panel{padding:0;overflow:hidden}.table-scroll{overflow:auto}table{width:100%;border-collapse:collapse;min-width:860px}th{padding:12px 14px;background:#f8fafc;color:#475569;text-transform:uppercase;letter-spacing:.035em;font-size:11px;text-align:left;border-bottom:1px solid var(--border)}td{padding:14px;border-bottom:1px solid var(--border);vertical-align:top;font-size:13px}tbody tr:hover{background:#fbfdff}.photo{width:68px;height:86px;border-radius:10px;object-fit:cover;border:1px solid #cbd5e1;background:#f8fafc}.photo-empty{width:68px;height:86px;border-radius:10px;border:1px dashed #cbd5e1;background:#f8fafc;display:grid;place-items:center;color:#94a3b8;font-size:11px;text-align:center;padding:6px}.student-name{display:block;font-weight:800;margin-bottom:4px}.student-meta{display:block;color:var(--muted);font-size:11px;line-height:1.55}.state{display:inline-flex;align-items:center;border-radius:999px;padding:6px 9px;font-size:11px;font-weight:800;white-space:nowrap}.state-missing{background:var(--red-soft);color:var(--red)}.state-review{background:var(--amber-soft);color:var(--amber)}.state-upload{background:var(--blue-soft);color:#1d4ed8}.state-rfid{background:var(--blue-soft);color:#1d4ed8}.state-completed{background:var(--green-soft);color:var(--green)}.issue-list{display:flex;gap:6px;flex-wrap:wrap}.reason-list{display:grid;gap:5px;max-width:360px;line-height:1.45}.reason-item{display:flex;gap:7px;align-items:flex-start}.reason-item:before{content:"•";color:#94a3b8;font-weight:900}.card-lines{display:grid;gap:5px}.card-line{display:flex;align-items:center;gap:6px}.card-line strong{font-size:11px;min-width:54px;color:#475569}.value-ok{font-family:ui-monospace,SFMono-Regular,Consolas,monospace;font-size:11px;color:#166534}.value-missing{font-size:11px;color:var(--red);font-weight:750}.row-actions{display:flex;gap:7px;flex-wrap:wrap;align-items:flex-start}.row-details,.row-more{position:relative}.row-details>summary,.row-more>summary{cursor:pointer;list-style:none;border-radius:8px;padding:7px 9px;background:#f1f5f9;color:#334155;font-size:11px;font-weight:800}.row-details>summary::-webkit-details-marker,.row-more>summary::-webkit-details-marker{display:none}.details-box,.more-box{margin-top:7px;padding:10px;border:1px solid var(--border);border-radius:10px;background:#f8fafc;min-width:230px;color:#475569;font-size:11px;line-height:1.6}.more-box{display:flex;gap:6px;flex-wrap:wrap}.more-box button{margin:0}.muted{color:var(--muted)}.settings{padding:0;overflow:hidden}.settings>summary{cursor:pointer;list-style:none;padding:16px 20px;font-weight:800;color:var(--navy);display:flex;justify-content:space-between;align-items:center}.settings>summary::-webkit-details-marker{display:none}.settings>summary:after{content:'Buka';font-size:11px;color:var(--blue);background:var(--blue-soft);padding:5px 8px;border-radius:999px}.settings[open]>summary:after{content:'Tutup'}.settings-body{padding:0 20px 20px;border-top:1px solid var(--border)}.settings-section{padding-top:17px}.settings-section+.settings-section{margin-top:17px;border-top:1px solid var(--border)}.settings-section h3{margin:0 0 5px;font-size:15px}.settings-section p{margin:0 0 12px;color:var(--muted);font-size:12px}.source-row{display:grid;grid-template-columns:repeat(4,minmax(0,1fr));gap:8px;margin-top:12px}.source-item{border:1px solid var(--border);border-radius:10px;padding:10px;background:#f8fafc}.source-item span{display:block;color:var(--muted);font-size:10px}.source-item b{font-size:19px}.guide-row{display:grid;grid-template-columns:repeat(3,minmax(0,1fr));gap:8px}.guide-item{border:1px solid var(--border);border-radius:10px;padding:10px;font-size:12px;color:#475569}.auto-progress{margin-top:12px;padding:12px;border:1px solid #bfdbfe;background:#fff;border-radius:11px}.auto-progress[hidden]{display:none}.progress-head{display:flex;justify-content:space-between;gap:8px;margin-bottom:8px;font-size:12px}.progress-track{height:9px;border-radius:999px;background:#e2e8f0;overflow:hidden}.progress-fill{height:100%;width:0;background:#2563eb;transition:width .2s}.auto-counts{display:grid;grid-template-columns:repeat(5,1fr);gap:6px;margin-top:9px}.auto-count{padding:7px;border-radius:8px;text-align:center;background:#f8fafc;font-size:10px}.auto-count b{display:block;font-size:15px;margin-top:2px}.pagination-wrap{display:flex;justify-content:space-between;gap:12px;align-items:center;flex-wrap:wrap;padding:15px 18px}.pagination{display:flex;gap:5px;align-items:center;flex-wrap:wrap}.page-link{display:inline-flex;min-width:32px;height:32px;align-items:center;justify-content:center;padding:0 8px;border-radius:8px;background:#e2e8f0;color:#0f172a;text-decoration:none;font-weight:800;font-size:12px}.page-link.active{background:var(--blue);color:#fff}.page-link.disabled{opacity:.4;pointer-events:none}.small{font-size:11px;color:var(--muted)}.btn.small{min-height:32px;padding:8px 10px;font-family:Inter,"Segoe UI",Arial,sans-serif;font-size:12px;font-weight:800;line-height:1.15;letter-spacing:0;color:#fff;opacity:1;text-shadow:none;white-space:nowrap}.btn.secondary.small,.btn.subtle.small{color:#0f172a}.more-box .btn{font-family:Inter,"Segoe UI",Arial,sans-serif}.wa-line{display:flex;gap:5px;align-items:center;margin-top:6px}.wa-box{width:17px;height:17px;border:1px solid #94a3b8;border-radius:4px;background:#fff;display:inline-flex;align-items:center;justify-content:center;font-size:12px;font-weight:900;color:#16a34a}.wa-box.sent{border-color:#16a34a;background:#dcfce7}.wa-cancel{border:0;background:#fee2e2;color:#991b1b;border-radius:999px;width:17px;height:17px;cursor:pointer;font-weight:900;font-size:11px;padding:0}.wa-time{font-size:10px;color:#64748b}
 @media(max-width:900px){.summary-grid{grid-template-columns:1fr}.filters{grid-template-columns:1fr 1fr}.filters .field:nth-child(2){grid-column:span 2}.source-row,.guide-row{grid-template-columns:repeat(2,1fr)}}
 @media(max-width:620px){.wrap{padding:0 10px;margin:14px auto}.panel{padding:15px}.page-title{font-size:23px}.filters{grid-template-columns:1fr}.filters .field:nth-child(2){grid-column:span 1}.filters .btn{width:100%}.source-row,.guide-row,.auto-counts{grid-template-columns:1fr 1fr}.head-actions{width:100%}.head-actions .btn{flex:1}}
 </style>
@@ -2293,7 +2350,7 @@ $resetAdvancedUrl = '?filter=attention';
         <div class="page-head">
             <div>
                 <h1 class="page-title">Semakan Foto Kad Matrik</h1>
-                <p class="subtitle">Kenal pasti gambar bermasalah, upload baharu dan kad yang belum lengkap.</p>
+                <p class="subtitle">Fokus kepada gambar tiada dalam MIS, RFID belum didaftarkan dan gambar yang perlu repair.</p>
             </div>
             <div class="head-actions">
                 <form method="post" onsubmit="return confirm('Jalankan audit semua gambar pelajar aktif sekarang? Proses ini mungkin mengambil sedikit masa.');">
@@ -2312,16 +2369,16 @@ $resetAdvancedUrl = '?filter=attention';
     <section class="panel">
         <div class="summary-grid">
             <a class="summary-card missing <?= $filter === 'missing' ? 'active' : '' ?>" href="<?= h($tabUrls['missing']) ?>">
-                <span>Tiada Gambar</span><b><?= number_format(stat_int($stats, 'simple_missing')) ?></b><small>Gambar tidak ditemui dalam MIS</small>
+                <span>Tiada Gambar dalam MIS</span><b><?= number_format(stat_int($stats, 'simple_missing')) ?></b><small>Gambar pelajar tidak ditemui</small>
             </a>
-            <a class="summary-card review <?= in_array($filter, ['review_all','review','upload'], true) ? 'active' : '' ?>" href="<?= h($tabUrls['review_all']) ?>">
-                <span>Perlu Semakan</span><b><?= number_format(stat_int($stats, 'simple_review_total')) ?></b><small>Termasuk upload baharu dan isu gambar</small>
+            <a class="summary-card rfid <?= $filter === 'rfid' ? 'active' : '' ?>" href="<?= h($tabUrls['rfid']) ?>">
+                <span>Belum Daftar RFID</span><b><?= number_format(stat_int($stats, 'simple_rfid')) ?></b><small>Kiraan ikut rekod RFID MIS</small>
             </a>
-            <a class="summary-card card-status <?= $filter === 'card' ? 'active' : '' ?>" href="<?= h($tabUrls['card']) ?>">
-                <span>Kad Belum Lengkap</span><b><?= number_format(stat_int($stats, 'simple_card')) ?></b><small>No. kad atau UID RFID belum direkod</small>
+            <a class="summary-card review <?= $filter === 'repair' ? 'active' : '' ?>" href="<?= h($tabUrls['repair']) ?>">
+                <span>Gambar Perlu Repair</span><b><?= number_format(stat_int($stats, 'simple_repair')) ?></b><small>Gambar memerlukan pembaikan</small>
             </a>
         </div>
-        <div class="progress-note">Pelajar aktif: <b><?= number_format(stat_int($stats, 'aktif')) ?></b> &nbsp;•&nbsp; Selesai: <b><?= number_format(stat_int($stats, 'simple_completed')) ?></b> &nbsp;•&nbsp; Perlu tindakan: <b><?= number_format(stat_int($stats, 'simple_attention')) ?></b></div>
+        <div class="progress-note">Pelajar aktif: <b><?= number_format(stat_int($stats, 'aktif')) ?></b> &nbsp;•&nbsp; Tanpa isu utama: <b><?= number_format(stat_int($stats, 'simple_completed')) ?></b> &nbsp;•&nbsp; Ada isu: <b><?= number_format(stat_int($stats, 'simple_attention')) ?></b></div>
     </section>
 
     <section class="panel">
@@ -2329,12 +2386,10 @@ $resetAdvancedUrl = '?filter=attention';
             <div class="field">
                 <label for="statusFilter">Status</label>
                 <select id="statusFilter" name="filter">
-                    <option value="attention" <?= $filter === 'attention' ? 'selected' : '' ?>>Semua Perlu Tindakan</option>
-                    <option value="missing" <?= $filter === 'missing' ? 'selected' : '' ?>>Tiada Gambar</option>
-                    <option value="review_all" <?= $filter === 'review_all' ? 'selected' : '' ?>>Gambar Perlu Semakan</option>
-                    <option value="upload" <?= $filter === 'upload' ? 'selected' : '' ?>>Upload Baharu</option>
-                    <option value="card" <?= $filter === 'card' ? 'selected' : '' ?>>Kad Belum Lengkap</option>
-                    <option value="completed" <?= $filter === 'completed' ? 'selected' : '' ?>>Selesai</option>
+                    <option value="attention" <?= $filter === 'attention' ? 'selected' : '' ?>>Semua Isu</option>
+                    <option value="missing" <?= $filter === 'missing' ? 'selected' : '' ?>>Tiada Gambar dalam MIS</option>
+                    <option value="rfid" <?= $filter === 'rfid' ? 'selected' : '' ?>>Belum Daftar RFID</option>
+                    <option value="repair" <?= $filter === 'repair' ? 'selected' : '' ?>>Gambar Perlu Repair</option>
                     <option value="all" <?= $filter === 'all' ? 'selected' : '' ?>>Semua Pelajar</option>
                 </select>
             </div>
@@ -2426,9 +2481,9 @@ $resetAdvancedUrl = '?filter=attention';
             <div class="settings-section">
                 <h3>Panduan ringkas</h3>
                 <div class="guide-row">
-                    <div class="guide-item"><b>Tiada Gambar</b><br>Hubungi pelajar dan minta upload gambar.</div>
-                    <div class="guide-item"><b>Perlu Semakan</b><br>Semak gambar, repair atau luluskan upload.</div>
-                    <div class="guide-item"><b>Kad Belum Lengkap</b><br>Semak No. Kad dan UID RFID dalam MIS.</div>
+                    <div class="guide-item"><b>Tiada Gambar dalam MIS</b><br>Hubungi pelajar atau buka borang upload.</div>
+                    <div class="guide-item"><b>Belum Daftar RFID</b><br>Semak pendaftaran kad RFID dalam MIS.</div>
+                    <div class="guide-item"><b>Gambar Perlu Repair</b><br>Repair gambar atau minta pelajar upload semula.</div>
                 </div>
             </div>
         </div>
@@ -2440,15 +2495,14 @@ $resetAdvancedUrl = '?filter=attention';
         <section class="panel table-panel">
             <div class="table-scroll">
                 <table>
-                    <thead><tr><th>Foto</th><th>Pelajar</th><th>Status</th><th>Sebab</th><th>Kad / RFID</th><th>Tindakan</th></tr></thead>
+                    <thead><tr><th>Foto</th><th>Pelajar</th><th>Isu Dikesan</th><th>Sebab</th><th>Tindakan</th></tr></thead>
                     <tbody>
-                    <?php if (!$rows): ?><tr><td colspan="6" class="muted">Tiada rekod untuk paparan ini.</td></tr><?php endif; ?>
+                    <?php if (!$rows): ?><tr><td colspan="5" class="muted">Tiada rekod untuk paparan ini.</td></tr><?php endif; ?>
                     <?php foreach ($rows as $row):
                         $matrik = (string)($row['matrik'] ?? '');
                         $exists = (int)($row['photo_exists'] ?? 0) === 1;
                         $proxyUrl = '/zurie/student_photo.php?nomatrik=' . rawurlencode($matrik);
-                        $workflow = audit_workflow_state($row);
-                        $workflowKey = (string)$workflow['key'];
+                        $issues = audit_issue_flags($row);
                         $uploadStatus = strtolower(trim((string)($row['upload_status'] ?? '')));
                         $syncStatus = strtolower(trim((string)($row['sync_status'] ?? '')));
                         $backgroundStatus = strtolower(trim((string)($row['background_status'] ?? '')));
@@ -2468,27 +2522,29 @@ $resetAdvancedUrl = '?filter=attention';
                             <span class="student-meta"><?= h($matrik) ?></span>
                             <span class="student-meta"><?= h((string)($row['praktikum'] ?? '-')) ?> · <?= h((string)($row['jurusan'] ?? '-')) ?></span>
                         </td>
-                        <td><span class="state <?= h((string)$workflow['class']) ?>"><?= h((string)$workflow['label']) ?></span></td>
-                        <td class="reason"><?= h((string)$workflow['reason']) ?></td>
                         <td>
-                            <?php if ((int)($row['pg_active'] ?? 0) === 1): ?>
-                                <div class="card-lines">
-                                    <div class="card-line"><strong>No. Kad</strong><?php if ($cardNo !== ''): ?><span class="value-ok"><?= h($cardNo) ?></span><?php else: ?><span class="value-missing">Belum direkod</span><?php endif; ?></div>
-                                    <div class="card-line"><strong>RFID</strong><?php if ($rfidUid !== ''): ?><span class="value-ok"><?= h($rfidUid) ?></span><?php else: ?><span class="value-missing">Belum daftar</span><?php endif; ?></div>
-                                </div>
-                            <?php else: ?><span class="small">Data kad tidak tersedia</span><?php endif; ?>
+                            <div class="issue-list">
+                                <?php if ($issues['missing']): ?><span class="state state-missing">Tiada Gambar</span><?php endif; ?>
+                                <?php if ($issues['rfid']): ?><span class="state state-rfid">Belum Daftar RFID</span><?php endif; ?>
+                                <?php if ($issues['repair']): ?><span class="state state-review">Perlu Repair</span><?php endif; ?>
+                                <?php if (!$issues['missing'] && !$issues['rfid'] && !$issues['repair']): ?><span class="state state-completed">Tiada Isu</span><?php endif; ?>
+                            </div>
+                        </td>
+                        <td>
+                            <div class="reason-list">
+                                <?php foreach ($issues['reasons'] as $issueReason): ?><div class="reason-item"><?= h((string)$issueReason) ?></div><?php endforeach; ?>
+                                <?php if ($issues['reasons'] === []): ?><span class="muted">Tiada tindakan diperlukan.</span><?php endif; ?>
+                            </div>
                         </td>
                         <td>
                             <div class="row-actions">
-                                <?php if ($workflowKey === 'missing'): ?>
+                                <?php if ($issues['missing']): ?>
                                     <?php if ($waUrl !== ''): ?><a class="btn wa small" target="_blank" rel="noopener" href="<?= h($waUrl) ?>" onclick='markWaSent(<?= json_encode($matrik, JSON_HEX_APOS|JSON_HEX_QUOT) ?>, <?= json_encode((string)$waContext['type'], JSON_HEX_APOS|JSON_HEX_QUOT) ?>, <?= json_encode((string)$waContext['note'], JSON_HEX_APOS|JSON_HEX_QUOT) ?>)'>Hubungi Pelajar</a>
                                     <?php else: ?><a class="btn secondary small" href="/zurie/upload/" target="_blank" rel="noopener">Borang Upload</a><?php endif; ?>
-                                <?php elseif ($workflowKey === 'upload' || ($uploadStatus !== '' && ($syncStatus === 'gagal' || ($uploadStatus === 'lulus' && $syncStatus !== 'berjaya')))): ?>
-                                    <a class="btn small" href="/zurie/pages/upload_review.php?q=<?= rawurlencode($matrik) ?>">Semak Upload</a>
-                                <?php elseif ($workflowKey === 'review' && $exists && in_array($backgroundStatus, ['', 'gagal'], true)): ?>
-                                    <button class="btn small" type="submit" name="action" value="background_check" formaction="?<?= h($currentQueryString) ?>" onclick="this.form.querySelector('#singleMatrik').value='<?= h($matrik) ?>'">Analisis Foto</button>
-                                <?php elseif ($workflowKey === 'card'): ?>
-                                    <details class="row-details"><summary>Semak Kad</summary><div class="details-box">Maklumat kad perlu dikemas kini melalui modul kad/RFID dalam MIS.</div></details>
+                                <?php elseif ($issues['repair']): ?>
+                                    <button class="btn repair small" type="submit" name="action" value="quality_repair" formaction="?<?= h($currentQueryString) ?>" onclick="if(!confirm('Auto repair gambar <?= h($matrik) ?>?'))return false;this.form.querySelector('#singleMatrik').value='<?= h($matrik) ?>'">Repair</button>
+                                <?php elseif ($issues['rfid']): ?>
+                                    <details class="row-details"><summary>Semak RFID</summary><div class="details-box">Kad RFID belum didaftarkan dalam MIS. Buka modul Register RFID Kad Matrik untuk tindakan lanjut.</div></details>
                                 <?php elseif ($exists): ?>
                                     <a class="btn secondary small" href="<?= h($proxyUrl) ?>" target="_blank" rel="noopener">Lihat Foto</a>
                                 <?php endif; ?>
@@ -2501,6 +2557,8 @@ $resetAdvancedUrl = '?filter=attention';
                                         Latar: <?= h((string)($row['background_status'] ?? 'Belum dinilai')) ?>
                                         <?php if ($row['background_score'] !== null): ?><br>Skor: <?= number_format((float)$row['background_score'], 1) ?>%<?php endif; ?>
                                         <?php if ($uploadStatus !== ''): ?><br>Upload: <?= h(strtoupper($uploadStatus)) ?> · Sync: <?= h(strtoupper($syncStatus !== '' ? $syncStatus : 'BELUM')) ?><?php endif; ?>
+                                        <br>No. Kad: <?= $cardNo !== '' ? h($cardNo) : 'Belum direkod' ?>
+                                        <br>UID RFID: <?= $rfidUid !== '' ? h($rfidUid) : 'Belum direkod' ?>
                                     </div>
                                 </details>
 
