@@ -194,6 +194,63 @@ function clean_matrik_audit(string $value): string
 }
 
 /**
+ * Ambil No. Matrik daripada nama fail gambar SFTP.
+ * Logik diselaraskan dengan halaman photo_versions.php.
+ */
+function audit_photo_version_matrik(string $filename): string
+{
+    $decoded = rawurldecode(basename(str_replace('\\', '/', $filename)));
+    $stem = strtoupper(trim((string)pathinfo($decoded, PATHINFO_FILENAME)));
+
+    if (preg_match('/^([A-Z]{1,5}[0-9]{6,20})(?=$|[^A-Z0-9])/', $stem, $match)) {
+        return clean_matrik_audit((string)$match[1]);
+    }
+
+    if (preg_match('/^[A-Z0-9]{8,30}$/', $stem)) {
+        return clean_matrik_audit($stem);
+    }
+
+    return '';
+}
+
+/**
+ * Baca snapshot manifest Versi Gambar tanpa membuat sambungan SFTP baharu.
+ * Kiraan akan berubah selepas butang Scan SFTP dijalankan pada halaman Versi Gambar.
+ *
+ * @return array{counts:array<string,int>,total:int,scanned_at:string}
+ */
+function audit_photo_version_snapshot(): array
+{
+    $snapshot = ['counts' => [], 'total' => 0, 'scanned_at' => ''];
+    $path = dirname(__DIR__) . '/data/photo_versions_manifest.json';
+    if (!is_file($path)) {
+        return $snapshot;
+    }
+
+    $raw = @file_get_contents($path);
+    $manifest = is_string($raw) ? json_decode($raw, true) : null;
+    if (!is_array($manifest)) {
+        return $snapshot;
+    }
+
+    $snapshot['scanned_at'] = trim((string)($manifest['scanned_at'] ?? ''));
+    foreach ((array)($manifest['files'] ?? []) as $file) {
+        if (!is_array($file)) {
+            continue;
+        }
+        $filename = trim((string)($file['filename'] ?? ''));
+        $matrik = $filename !== '' ? audit_photo_version_matrik($filename) : '';
+        if ($matrik === '') {
+            continue;
+        }
+        $snapshot['counts'][$matrik] = (int)($snapshot['counts'][$matrik] ?? 0) + 1;
+        $snapshot['total']++;
+    }
+
+    return $snapshot;
+}
+
+/**
  * Seragamkan nilai Pengambilan daripada PostgreSQL/MIS.
  * Contoh yang diterima: 4, 04, Intake 4, Pengambilan 4.
  */
@@ -2035,6 +2092,7 @@ $filteredCount = 0;
 $phoneColumn = null;
 $activeSnapshot = [];
 $activeReconciliation = [];
+$photoVersionSnapshot = ['counts' => [], 'total' => 0, 'scanned_at' => ''];
 $filterOptions = [
     'jantina' => [],
     'intake' => [],
@@ -2053,6 +2111,7 @@ try {
     $phoneColumn = audit_pick_phone_column($pdo);
     $actor = actor_name_audit();
     $activeSnapshot = audit_pg_active_snapshot();
+    $photoVersionSnapshot = audit_photo_version_snapshot();
 
     if ($_SERVER['REQUEST_METHOD'] === 'GET' && (string)($_GET['download'] ?? '') === 'hep_missing_pdf') {
         audit_download_missing_pdf($pdo, $phoneColumn, $search, $actor, $studentFilters);
@@ -2370,7 +2429,7 @@ $resetAdvancedUrl = '?filter=attention';
 <title>Semakan Foto Kad Matrik | Zurie</title>
 <style>
 :root{--bg:#f5f7fb;--surface:#fff;--border:#e2e8f0;--text:#0f172a;--muted:#64748b;--navy:#173b67;--blue:#2563eb;--blue-soft:#eff6ff;--red:#b42318;--red-soft:#fff1f0;--amber:#9a6700;--amber-soft:#fff8e6;--green:#18794e;--green-soft:#ecfdf3;--purple:#6941c6;--purple-soft:#f4f3ff}
-*{box-sizing:border-box}body{margin:0;background:var(--bg);color:var(--text);font-family:Inter,"Segoe UI",Arial,sans-serif}.wrap{max-width:1240px;margin:28px auto;padding:0 18px}.panel{background:var(--surface);border:1px solid var(--border);border-radius:16px;padding:20px;margin-bottom:16px;box-shadow:0 5px 18px rgba(15,23,42,.04)}.breadcrumb{display:flex;gap:7px;align-items:center;font-size:13px;margin-bottom:14px;color:var(--muted)}.breadcrumb a{color:var(--blue);font-weight:700;text-decoration:none}.page-head{display:flex;align-items:flex-start;justify-content:space-between;gap:18px;flex-wrap:wrap}.page-title{margin:0 0 6px;font-size:27px;line-height:1.15;letter-spacing:-.02em}.subtitle{margin:0;color:var(--muted);font-size:14px}.head-actions,.inline-actions{display:flex;align-items:center;gap:8px;flex-wrap:wrap}.btn{appearance:none;border:0;border-radius:9px;padding:10px 13px;background:var(--blue);color:#fff;font-weight:750;font-size:13px;line-height:1;text-decoration:none;cursor:pointer;display:inline-flex;align-items:center;justify-content:center;gap:6px}.btn:hover{filter:brightness(.97)}.btn.secondary{background:#eef2f7;color:#1e293b}.btn.subtle{background:#fff;color:#334155;border:1px solid var(--border)}.btn.danger{background:#b42318}.btn.warn{background:#b45309}.btn.good{background:#15803d}.btn.repair{background:#6d28d9}.btn.upload{background:#c2410c}.btn.wa{background:#15803d}.btn.small{padding:7px 9px;font-size:11px}.alert{border-radius:11px;padding:11px 13px;margin-bottom:12px;font-size:13px}.alert.ok{background:var(--green-soft);color:var(--green);border:1px solid #bbf7d0}.alert.err{background:var(--red-soft);color:var(--red);border:1px solid #fecaca}.summary-grid{display:grid;grid-template-columns:repeat(3,minmax(0,1fr));gap:12px}.summary-card{display:block;text-decoration:none;color:inherit;border:1px solid var(--border);border-radius:14px;padding:16px;background:#fff;transition:.15s}.summary-card:hover{transform:translateY(-1px);border-color:#a8b7ca}.summary-card.active{box-shadow:0 0 0 2px rgba(37,99,235,.12)}.summary-card span{display:block;color:var(--muted);font-size:12px;font-weight:700}.summary-card b{display:block;font-size:27px;margin:7px 0 3px}.summary-card small{color:var(--muted)}.summary-card.missing{border-top:3px solid #d92d20}.summary-card.review{border-top:3px solid #f59e0b}.summary-card.rfid{border-top:3px solid #2563eb}.progress-note{margin-top:13px;color:var(--muted);font-size:12px}.filters{display:grid;grid-template-columns:minmax(190px,.8fr) minmax(280px,1.5fr) minmax(170px,.7fr) auto auto;gap:10px;align-items:end}.field{display:flex;flex-direction:column;gap:6px}.field label{font-size:11px;text-transform:uppercase;letter-spacing:.04em;font-weight:800;color:#475569}.field input,.field select{width:100%;height:40px;border:1px solid #cbd5e1;border-radius:9px;padding:0 11px;background:#fff;color:var(--text)}.result-line{margin-top:12px;color:var(--muted);font-size:12px}.table-panel{padding:0;overflow:hidden}.table-scroll{overflow:auto}table{width:100%;border-collapse:collapse;min-width:860px}th{padding:12px 14px;background:#f8fafc;color:#475569;text-transform:uppercase;letter-spacing:.035em;font-size:11px;text-align:left;border-bottom:1px solid var(--border)}td{padding:14px;border-bottom:1px solid var(--border);vertical-align:top;font-size:13px}tbody tr:hover{background:#fbfdff}.photo{width:68px;height:86px;border-radius:10px;object-fit:cover;border:1px solid #cbd5e1;background:#f8fafc}.photo-empty{width:68px;height:86px;border-radius:10px;border:1px dashed #cbd5e1;background:#f8fafc;display:grid;place-items:center;color:#94a3b8;font-size:11px;text-align:center;padding:6px}.student-name{display:block;font-weight:800;margin-bottom:4px}.student-meta{display:block;color:var(--muted);font-size:11px;line-height:1.55}.state{display:inline-flex;align-items:center;border-radius:999px;padding:6px 9px;font-size:11px;font-weight:800;white-space:nowrap}.state-missing{background:var(--red-soft);color:var(--red)}.state-review{background:var(--amber-soft);color:var(--amber)}.state-upload{background:var(--blue-soft);color:#1d4ed8}.state-rfid{background:var(--blue-soft);color:#1d4ed8}.state-completed{background:var(--green-soft);color:var(--green)}.issue-list{display:flex;gap:6px;flex-wrap:wrap}.reason-list{display:grid;gap:5px;max-width:360px;line-height:1.45}.reason-item{display:flex;gap:7px;align-items:flex-start}.reason-item:before{content:"•";color:#94a3b8;font-weight:900}.card-lines{display:grid;gap:5px}.card-line{display:flex;align-items:center;gap:6px}.card-line strong{font-size:11px;min-width:54px;color:#475569}.value-ok{font-family:ui-monospace,SFMono-Regular,Consolas,monospace;font-size:11px;color:#166534}.value-missing{font-size:11px;color:var(--red);font-weight:750}.row-actions{display:flex;gap:7px;flex-wrap:wrap;align-items:flex-start}.row-details,.row-more{position:relative}.row-details>summary,.row-more>summary{cursor:pointer;list-style:none;border-radius:8px;padding:7px 9px;background:#f1f5f9;color:#334155;font-size:11px;font-weight:800}.row-details>summary::-webkit-details-marker,.row-more>summary::-webkit-details-marker{display:none}.details-box,.more-box{margin-top:7px;padding:10px;border:1px solid var(--border);border-radius:10px;background:#f8fafc;min-width:230px;color:#475569;font-size:11px;line-height:1.6}.more-box{display:flex;gap:6px;flex-wrap:wrap}.more-box button{margin:0}.muted{color:var(--muted)}.settings{padding:0;overflow:hidden}.settings>summary{cursor:pointer;list-style:none;padding:16px 20px;font-weight:800;color:var(--navy);display:flex;justify-content:space-between;align-items:center}.settings>summary::-webkit-details-marker{display:none}.settings>summary:after{content:'Buka';font-size:11px;color:var(--blue);background:var(--blue-soft);padding:5px 8px;border-radius:999px}.settings[open]>summary:after{content:'Tutup'}.settings-body{padding:0 20px 20px;border-top:1px solid var(--border)}.settings-section{padding-top:17px}.settings-section+.settings-section{margin-top:17px;border-top:1px solid var(--border)}.settings-section h3{margin:0 0 5px;font-size:15px}.settings-section p{margin:0 0 12px;color:var(--muted);font-size:12px}.source-row{display:grid;grid-template-columns:repeat(4,minmax(0,1fr));gap:8px;margin-top:12px}.source-item{border:1px solid var(--border);border-radius:10px;padding:10px;background:#f8fafc}.source-item span{display:block;color:var(--muted);font-size:10px}.source-item b{font-size:19px}.guide-row{display:grid;grid-template-columns:repeat(3,minmax(0,1fr));gap:8px}.guide-item{border:1px solid var(--border);border-radius:10px;padding:10px;font-size:12px;color:#475569}.auto-progress{margin-top:12px;padding:12px;border:1px solid #bfdbfe;background:#fff;border-radius:11px}.auto-progress[hidden]{display:none}.progress-head{display:flex;justify-content:space-between;gap:8px;margin-bottom:8px;font-size:12px}.progress-track{height:9px;border-radius:999px;background:#e2e8f0;overflow:hidden}.progress-fill{height:100%;width:0;background:#2563eb;transition:width .2s}.auto-counts{display:grid;grid-template-columns:repeat(5,1fr);gap:6px;margin-top:9px}.auto-count{padding:7px;border-radius:8px;text-align:center;background:#f8fafc;font-size:10px}.auto-count b{display:block;font-size:15px;margin-top:2px}.pagination-wrap{display:flex;justify-content:space-between;gap:12px;align-items:center;flex-wrap:wrap;padding:15px 18px}.pagination{display:flex;gap:5px;align-items:center;flex-wrap:wrap}.page-link{display:inline-flex;min-width:32px;height:32px;align-items:center;justify-content:center;padding:0 8px;border-radius:8px;background:#e2e8f0;color:#0f172a;text-decoration:none;font-weight:800;font-size:12px}.page-link.active{background:var(--blue);color:#fff}.page-link.disabled{opacity:.4;pointer-events:none}.small{font-size:11px;color:var(--muted)}.btn.small{min-height:32px;padding:8px 10px;font-family:Inter,"Segoe UI",Arial,sans-serif;font-size:12px;font-weight:800;line-height:1.15;letter-spacing:0;color:#fff;opacity:1;text-shadow:none;white-space:nowrap}.btn.secondary.small,.btn.subtle.small{color:#0f172a}.more-box .btn{font-family:Inter,"Segoe UI",Arial,sans-serif}.wa-line{display:flex;gap:5px;align-items:center;margin-top:6px}.wa-box{width:17px;height:17px;border:1px solid #94a3b8;border-radius:4px;background:#fff;display:inline-flex;align-items:center;justify-content:center;font-size:12px;font-weight:900;color:#16a34a}.wa-box.sent{border-color:#16a34a;background:#dcfce7}.wa-cancel{border:0;background:#fee2e2;color:#991b1b;border-radius:999px;width:17px;height:17px;cursor:pointer;font-weight:900;font-size:11px;padding:0}.wa-time{font-size:10px;color:#64748b}
+*{box-sizing:border-box}body{margin:0;background:var(--bg);color:var(--text);font-family:Inter,"Segoe UI",Arial,sans-serif}.wrap{max-width:1240px;margin:28px auto;padding:0 18px}.panel{background:var(--surface);border:1px solid var(--border);border-radius:16px;padding:20px;margin-bottom:16px;box-shadow:0 5px 18px rgba(15,23,42,.04)}.breadcrumb{display:flex;gap:7px;align-items:center;font-size:13px;margin-bottom:14px;color:var(--muted)}.breadcrumb a{color:var(--blue);font-weight:700;text-decoration:none}.page-head{display:flex;align-items:flex-start;justify-content:space-between;gap:18px;flex-wrap:wrap}.page-title{margin:0 0 6px;font-size:27px;line-height:1.15;letter-spacing:-.02em}.subtitle{margin:0;color:var(--muted);font-size:14px}.head-actions,.inline-actions{display:flex;align-items:center;gap:8px;flex-wrap:wrap}.btn{appearance:none;border:0;border-radius:9px;padding:10px 13px;background:var(--blue);color:#fff;font-weight:750;font-size:13px;line-height:1;text-decoration:none;cursor:pointer;display:inline-flex;align-items:center;justify-content:center;gap:6px}.btn:hover{filter:brightness(.97)}.btn.secondary{background:#eef2f7;color:#1e293b}.btn.subtle{background:#fff;color:#334155;border:1px solid var(--border)}.btn.danger{background:#b42318}.btn.warn{background:#b45309}.btn.good{background:#15803d}.btn.repair{background:#6d28d9}.btn.upload{background:#c2410c}.btn.wa{background:#15803d}.btn.small{padding:7px 9px;font-size:11px}.alert{border-radius:11px;padding:11px 13px;margin-bottom:12px;font-size:13px}.alert.ok{background:var(--green-soft);color:var(--green);border:1px solid #bbf7d0}.alert.err{background:var(--red-soft);color:var(--red);border:1px solid #fecaca}.summary-grid{display:grid;grid-template-columns:repeat(3,minmax(0,1fr));gap:12px}.summary-card{display:block;text-decoration:none;color:inherit;border:1px solid var(--border);border-radius:14px;padding:16px;background:#fff;transition:.15s}.summary-card:hover{transform:translateY(-1px);border-color:#a8b7ca}.summary-card.active{box-shadow:0 0 0 2px rgba(37,99,235,.12)}.summary-card span{display:block;color:var(--muted);font-size:12px;font-weight:700}.summary-card b{display:block;font-size:27px;margin:7px 0 3px}.summary-card small{color:var(--muted)}.summary-card.missing{border-top:3px solid #d92d20}.summary-card.review{border-top:3px solid #f59e0b}.summary-card.rfid{border-top:3px solid #2563eb}.progress-note{margin-top:13px;color:var(--muted);font-size:12px}.filters{display:grid;grid-template-columns:minmax(190px,.8fr) minmax(280px,1.5fr) minmax(170px,.7fr) auto auto;gap:10px;align-items:end}.field{display:flex;flex-direction:column;gap:6px}.field label{font-size:11px;text-transform:uppercase;letter-spacing:.04em;font-weight:800;color:#475569}.field input,.field select{width:100%;height:40px;border:1px solid #cbd5e1;border-radius:9px;padding:0 11px;background:#fff;color:var(--text)}.result-line{margin-top:12px;color:var(--muted);font-size:12px}.table-panel{padding:0;overflow:hidden}.table-scroll{overflow:auto}table{width:100%;border-collapse:collapse;min-width:860px}th{padding:12px 14px;background:#f8fafc;color:#475569;text-transform:uppercase;letter-spacing:.035em;font-size:11px;text-align:left;border-bottom:1px solid var(--border)}td{padding:14px;border-bottom:1px solid var(--border);vertical-align:top;font-size:13px}tbody tr:hover{background:#fbfdff}.photo{width:68px;height:86px;border-radius:10px;object-fit:cover;border:1px solid #cbd5e1;background:#f8fafc}.photo-empty{width:68px;height:86px;border-radius:10px;border:1px dashed #cbd5e1;background:#f8fafc;display:grid;place-items:center;color:#94a3b8;font-size:11px;text-align:center;padding:6px}.student-name{display:block;font-weight:800;margin-bottom:4px}.student-meta{display:block;color:var(--muted);font-size:11px;line-height:1.55}.student-version-link{display:inline-flex;align-items:center;gap:5px;margin-top:5px;padding:4px 7px;border-radius:7px;background:#eff6ff;color:#1d4ed8;text-decoration:none;font-size:10px;font-weight:800;border:1px solid #dbeafe}.student-version-link:hover{background:#dbeafe}.student-version-link.empty{background:#f8fafc;color:#64748b;border-color:#e2e8f0}.state{display:inline-flex;align-items:center;border-radius:999px;padding:6px 9px;font-size:11px;font-weight:800;white-space:nowrap}.state-missing{background:var(--red-soft);color:var(--red)}.state-review{background:var(--amber-soft);color:var(--amber)}.state-upload{background:var(--blue-soft);color:#1d4ed8}.state-rfid{background:var(--blue-soft);color:#1d4ed8}.state-completed{background:var(--green-soft);color:var(--green)}.issue-list{display:flex;gap:6px;flex-wrap:wrap}.reason-list{display:grid;gap:5px;max-width:360px;line-height:1.45}.reason-item{display:flex;gap:7px;align-items:flex-start}.reason-item:before{content:"•";color:#94a3b8;font-weight:900}.card-lines{display:grid;gap:5px}.card-line{display:flex;align-items:center;gap:6px}.card-line strong{font-size:11px;min-width:54px;color:#475569}.value-ok{font-family:ui-monospace,SFMono-Regular,Consolas,monospace;font-size:11px;color:#166534}.value-missing{font-size:11px;color:var(--red);font-weight:750}.row-actions{display:flex;gap:7px;flex-wrap:wrap;align-items:flex-start}.row-details,.row-more{position:relative}.row-details>summary,.row-more>summary{cursor:pointer;list-style:none;border-radius:8px;padding:7px 9px;background:#f1f5f9;color:#334155;font-size:11px;font-weight:800}.row-details>summary::-webkit-details-marker,.row-more>summary::-webkit-details-marker{display:none}.details-box,.more-box{margin-top:7px;padding:10px;border:1px solid var(--border);border-radius:10px;background:#f8fafc;min-width:230px;color:#475569;font-size:11px;line-height:1.6}.more-box{display:flex;gap:6px;flex-wrap:wrap}.more-box button{margin:0}.muted{color:var(--muted)}.settings{padding:0;overflow:hidden}.settings>summary{cursor:pointer;list-style:none;padding:16px 20px;font-weight:800;color:var(--navy);display:flex;justify-content:space-between;align-items:center}.settings>summary::-webkit-details-marker{display:none}.settings>summary:after{content:'Buka';font-size:11px;color:var(--blue);background:var(--blue-soft);padding:5px 8px;border-radius:999px}.settings[open]>summary:after{content:'Tutup'}.settings-body{padding:0 20px 20px;border-top:1px solid var(--border)}.settings-section{padding-top:17px}.settings-section+.settings-section{margin-top:17px;border-top:1px solid var(--border)}.settings-section h3{margin:0 0 5px;font-size:15px}.settings-section p{margin:0 0 12px;color:var(--muted);font-size:12px}.source-row{display:grid;grid-template-columns:repeat(4,minmax(0,1fr));gap:8px;margin-top:12px}.source-item{border:1px solid var(--border);border-radius:10px;padding:10px;background:#f8fafc}.source-item span{display:block;color:var(--muted);font-size:10px}.source-item b{font-size:19px}.guide-row{display:grid;grid-template-columns:repeat(3,minmax(0,1fr));gap:8px}.guide-item{border:1px solid var(--border);border-radius:10px;padding:10px;font-size:12px;color:#475569}.auto-progress{margin-top:12px;padding:12px;border:1px solid #bfdbfe;background:#fff;border-radius:11px}.auto-progress[hidden]{display:none}.progress-head{display:flex;justify-content:space-between;gap:8px;margin-bottom:8px;font-size:12px}.progress-track{height:9px;border-radius:999px;background:#e2e8f0;overflow:hidden}.progress-fill{height:100%;width:0;background:#2563eb;transition:width .2s}.auto-counts{display:grid;grid-template-columns:repeat(5,1fr);gap:6px;margin-top:9px}.auto-count{padding:7px;border-radius:8px;text-align:center;background:#f8fafc;font-size:10px}.auto-count b{display:block;font-size:15px;margin-top:2px}.pagination-wrap{display:flex;justify-content:space-between;gap:12px;align-items:center;flex-wrap:wrap;padding:15px 18px}.pagination{display:flex;gap:5px;align-items:center;flex-wrap:wrap}.page-link{display:inline-flex;min-width:32px;height:32px;align-items:center;justify-content:center;padding:0 8px;border-radius:8px;background:#e2e8f0;color:#0f172a;text-decoration:none;font-weight:800;font-size:12px}.page-link.active{background:var(--blue);color:#fff}.page-link.disabled{opacity:.4;pointer-events:none}.small{font-size:11px;color:var(--muted)}.btn.small{min-height:32px;padding:8px 10px;font-family:Inter,"Segoe UI",Arial,sans-serif;font-size:12px;font-weight:800;line-height:1.15;letter-spacing:0;color:#fff;opacity:1;text-shadow:none;white-space:nowrap}.btn.secondary.small,.btn.subtle.small{color:#0f172a}.more-box .btn{font-family:Inter,"Segoe UI",Arial,sans-serif}.wa-line{display:flex;gap:5px;align-items:center;margin-top:6px}.wa-box{width:17px;height:17px;border:1px solid #94a3b8;border-radius:4px;background:#fff;display:inline-flex;align-items:center;justify-content:center;font-size:12px;font-weight:900;color:#16a34a}.wa-box.sent{border-color:#16a34a;background:#dcfce7}.wa-cancel{border:0;background:#fee2e2;color:#991b1b;border-radius:999px;width:17px;height:17px;cursor:pointer;font-weight:900;font-size:11px;padding:0}.wa-time{font-size:10px;color:#64748b}
 @media(max-width:900px){.summary-grid{grid-template-columns:1fr}.filters{grid-template-columns:1fr 1fr}.filters .field:nth-child(2){grid-column:span 2}.source-row,.guide-row{grid-template-columns:repeat(2,1fr)}}
 @media(max-width:620px){.wrap{padding:0 10px;margin:14px auto}.panel{padding:15px}.page-title{font-size:23px}.filters{grid-template-columns:1fr}.filters .field:nth-child(2){grid-column:span 1}.filters .btn{width:100%}.source-row,.guide-row,.auto-counts{grid-template-columns:1fr 1fr}.head-actions{width:100%}.head-actions .btn{flex:1}}
 </style>
@@ -2454,7 +2513,7 @@ $resetAdvancedUrl = '?filter=attention';
                     <a class="btn subtle" href="/zurie/pages/pg_live_lookup_setup.php">PostgreSQL</a>
                     <a class="btn subtle" href="/zurie/pages/mis_sftp_setup.php">SFTP MIS</a>
                     <a class="btn subtle" href="/zurie/pages/upload_review.php">Semakan Upload</a>
-                    <a class="btn subtle" href="/zurie/pages/photo_versions.php">Versi Gambar</a>
+                    <a class="btn subtle" href="/zurie/pages/photo_versions.php">Versi Gambar (<?= number_format((int)($photoVersionSnapshot['total'] ?? 0)) ?>)</a>
                 </div>
                 <?php if (!empty($activeReconciliation['ready'])): ?>
                     <div class="source-row">
@@ -2543,6 +2602,13 @@ $resetAdvancedUrl = '?filter=attention';
                         $waSent = (int)($row['whatsapp_sent'] ?? 0) === 1;
                         $cardNo = trim((string)($row['cardno'] ?? ''));
                         $rfidUid = trim((string)($row['em_cardno'] ?? ''));
+                        $photoVersionCount = (int)($photoVersionSnapshot['counts'][$matrik] ?? 0);
+                        $photoVersionUrl = '/zurie/pages/photo_versions.php?view=all&q=' . rawurlencode($matrik)
+                            . '#pelajar-' . rawurlencode($matrik);
+                        $photoVersionTitle = 'Buka versi gambar pelajar ini';
+                        if (!empty($photoVersionSnapshot['scanned_at'])) {
+                            $photoVersionTitle .= ' · Scan SFTP terakhir: ' . (string)$photoVersionSnapshot['scanned_at'];
+                        }
                     ?>
                     <tr>
                         <td>
@@ -2553,6 +2619,9 @@ $resetAdvancedUrl = '?filter=attention';
                             <span class="student-name"><?= h((string)($row['nama'] ?? '-')) ?></span>
                             <span class="student-meta"><?= h($matrik) ?></span>
                             <span class="student-meta"><?= h((string)($row['praktikum'] ?? '-')) ?> · <?= h((string)($row['jurusan'] ?? '-')) ?></span>
+                            <a class="student-version-link <?= $photoVersionCount < 1 ? 'empty' : '' ?>" href="<?= h($photoVersionUrl) ?>" title="<?= h($photoVersionTitle) ?>">
+                                <?= number_format($photoVersionCount) ?> gambar di SFTP ↗
+                            </a>
                         </td>
                         <td>
                             <div class="issue-list">
