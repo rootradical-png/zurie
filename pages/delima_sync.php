@@ -902,6 +902,10 @@ $configExists = is_file($config['config_path']);
   <section class="card">
     <form method="post" action="delima_sync.php" enctype="multipart/form-data">
       <input type="hidden" name="_csrf" value="<?= delima_e(zurie_security_csrf_token()) ?>">
+      <div class="actions" style="margin-top:0;margin-bottom:12px">
+        <a class="btn export" href="../templates/template_delima.xlsx" download title="Muat turun template Excel kosong">⬇ Muat Turun Template Excel</a>
+        <a class="btn" href="../templates/template_delima.csv" download title="Muat turun template CSV kosong">⬇ Muat Turun Template CSV</a>
+      </div>
       <div class="field">
         <label>Fail Raw DELIMa</label>
         <input type="file" name="delima_csv" accept=".xlsx,.xls,.csv,.txt,.tsv,application/vnd.openxmlformats-officedocument.spreadsheetml.sheet,application/vnd.ms-excel,text/csv,text/tab-separated-values">
