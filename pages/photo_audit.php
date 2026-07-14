@@ -2267,6 +2267,38 @@ try {
     }));
 
     $candidateRows = audit_filter_rows($tabRows, $studentFilters, $search);
+
+    // Susunan lalai: skor background paling rendah dahulu.
+    // Rekod yang belum mempunyai skor diletakkan selepas rekod yang telah dinilai.
+    usort($candidateRows, static function (array $left, array $right): int {
+        $leftRaw = $left['background_score'] ?? null;
+        $rightRaw = $right['background_score'] ?? null;
+        $leftHasScore = $leftRaw !== null && $leftRaw !== '' && is_numeric($leftRaw);
+        $rightHasScore = $rightRaw !== null && $rightRaw !== '' && is_numeric($rightRaw);
+
+        if ($leftHasScore && $rightHasScore) {
+            $scoreCompare = (float)$leftRaw <=> (float)$rightRaw;
+            if ($scoreCompare !== 0) {
+                return $scoreCompare;
+            }
+        } elseif ($leftHasScore !== $rightHasScore) {
+            return $leftHasScore ? -1 : 1;
+        }
+
+        $nameCompare = strnatcasecmp(
+            trim((string)($left['nama'] ?? '')),
+            trim((string)($right['nama'] ?? ''))
+        );
+        if ($nameCompare !== 0) {
+            return $nameCompare;
+        }
+
+        return strnatcasecmp(
+            trim((string)($left['matrik'] ?? '')),
+            trim((string)($right['matrik'] ?? ''))
+        );
+    });
+
     $filteredCount = count($candidateRows);
     $totalPages = max(1, (int)ceil($filteredCount / $perPage));
     if ($page > $totalPages) {
@@ -2409,7 +2441,7 @@ $resetAdvancedUrl = '?filter=attention';
             <button class="btn" type="submit">Cari</button>
             <a class="btn secondary" href="?filter=attention">Reset</a>
         </form>
-        <div class="result-line">Memaparkan <?= number_format($pageStart) ?>–<?= number_format($pageEnd) ?> daripada <?= number_format($filteredCount) ?> rekod.</div>
+        <div class="result-line">Memaparkan <?= number_format($pageStart) ?>–<?= number_format($pageEnd) ?> daripada <?= number_format($filteredCount) ?> rekod. Susunan lalai: skor background terendah dahulu.</div>
     </section>
 
     <details class="panel settings" id="adminSettings">
