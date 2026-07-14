@@ -551,33 +551,54 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
             }
 
             $standardFile = $matrik . '.jpg';
-            $existingStandard = false;
+            $existingStandardRow = null;
             foreach ($groups[$matrik] as $existingFile) {
-                if (strcasecmp((string)($existingFile['filename'] ?? ''), $standardFile) === 0) {
-                    $existingStandard = true;
+                // Remote MIS ialah Linux dan nama fail sensitif huruf besar/kecil.
+                // Hanya NOMATRIK.jpg yang tepat dianggap fail standard untuk overwrite.
+                if ((string)($existingFile['filename'] ?? '') === $standardFile) {
+                    $existingStandardRow = $existingFile;
                     break;
                 }
             }
 
             // Arkibkan JPG standard lama sebelum ia diganti/ditulis semula.
-            if ($existingStandard) {
-                $oldStandardArchive = pv_archive_remote_file($standardFile, $matrik, $config);
-                if (empty($oldStandardArchive['ok'])) {
-                    @unlink($jpgTemp);
-                    throw new RuntimeException('Gambar standard lama tidak diganti kerana proses arkib gagal: ' . (string)($oldStandardArchive['message'] ?? ''));
+            if (is_array($existingStandardRow)) {
+                $oldStandardSize = max(0, (int)($existingStandardRow['size'] ?? 0));
+
+                if ($oldStandardSize < 1) {
+                    // Fail 0 byte tidak mempunyai kandungan untuk diarkib. Benarkan ia
+                    // diganti dengan JPG baharu yang sah dan rekodkan sebabnya dalam log.
+                    pv_append_archive_log([
+                        'timestamp' => date('Y-m-d H:i:s'),
+                        'operation' => 'skip_empty_before_replace',
+                        'matrik' => $matrik,
+                        'remote_file' => $standardFile,
+                        'archive_file' => '',
+                        'bytes' => 0,
+                        'sha256' => '',
+                        'deleted' => false,
+                        'delete_message' => 'Fail standard lama bersaiz 0 byte; arkib tidak diperlukan sebelum diganti.',
+                        'actor' => pv_actor(),
+                    ]);
+                } else {
+                    $oldStandardArchive = pv_archive_remote_file($standardFile, $matrik, $config);
+                    if (empty($oldStandardArchive['ok'])) {
+                        @unlink($jpgTemp);
+                        throw new RuntimeException('Gambar standard lama tidak diganti kerana proses arkib gagal: ' . (string)($oldStandardArchive['message'] ?? ''));
+                    }
+                    pv_append_archive_log([
+                        'timestamp' => date('Y-m-d H:i:s'),
+                        'operation' => 'archive_before_replace',
+                        'matrik' => $matrik,
+                        'remote_file' => $standardFile,
+                        'archive_file' => (string)($oldStandardArchive['archive_file'] ?? ''),
+                        'bytes' => (int)($oldStandardArchive['bytes'] ?? 0),
+                        'sha256' => (string)($oldStandardArchive['sha256'] ?? ''),
+                        'deleted' => false,
+                        'delete_message' => 'Fail standard lama diarkib sebelum diganti.',
+                        'actor' => pv_actor(),
+                    ]);
                 }
-                pv_append_archive_log([
-                    'timestamp' => date('Y-m-d H:i:s'),
-                    'operation' => 'archive_before_replace',
-                    'matrik' => $matrik,
-                    'remote_file' => $standardFile,
-                    'archive_file' => (string)($oldStandardArchive['archive_file'] ?? ''),
-                    'bytes' => (int)($oldStandardArchive['bytes'] ?? 0),
-                    'sha256' => (string)($oldStandardArchive['sha256'] ?? ''),
-                    'deleted' => false,
-                    'delete_message' => 'Fail standard lama diarkib sebelum diganti.',
-                    'actor' => pv_actor(),
-                ]);
             }
 
             $upload = zurie_mis_sftp_upload_photo($jpgTemp, $matrik, $config);
@@ -589,7 +610,9 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
             $candidates = [];
             foreach ($groups[$matrik] as $file) {
                 $filename = trim((string)($file['filename'] ?? ''));
-                if ($filename !== '' && strcasecmp($filename, $standardFile) !== 0) {
+                // Kecualikan hanya fail standard tepat. Variasi .JPG/.JPEG/.PNG
+                // kekal sebagai calon arkib dan padam untuk elak gambar pendua.
+                if ($filename !== '' && $filename !== $standardFile) {
                     $candidates[] = $filename;
                 }
             }

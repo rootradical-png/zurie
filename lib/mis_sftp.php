@@ -537,9 +537,14 @@ function zurie_mis_sftp_download_photo_file(string $remoteFilename, string $loca
     }
 
     $remoteFile = $status['remote_dir'] . '/' . $remoteFilename;
+
+    // Pastikan tiada fail lama/part tertinggal sebelum proses muat turun baharu.
+    @unlink($localFile);
+    clearstatcache(true, $localFile);
+
     if ($status['driver'] === 'winscp') {
         $result = zurie_mis_sftp_run_winscp([
-            'get -transfer=binary ' . zurie_mis_sftp_winscp_quote($remoteFile) . ' ' . zurie_mis_sftp_winscp_quote($localFile),
+            'get -transfer=binary -resumesupport=off ' . zurie_mis_sftp_winscp_quote($remoteFile) . ' ' . zurie_mis_sftp_winscp_quote($localFile),
         ], $config);
         if (!$result['ok']) {
             return ['ok' => false, 'message' => $result['message'], 'remote_file' => $remoteFile];
@@ -566,9 +571,15 @@ function zurie_mis_sftp_download_photo_file(string $remoteFilename, string $loca
         }
     }
 
-    if (!is_file($localFile) || (int)filesize($localFile) < 1) {
+    // Fail ditulis oleh proses luar (WinSCP), jadi bersihkan stat cache PHP dahulu.
+    clearstatcache(true, $localFile);
+    if (!is_file($localFile) || (int)@filesize($localFile) < 1) {
         @unlink($localFile);
-        return ['ok' => false, 'message' => 'Fail remote kosong atau gagal disimpan.', 'remote_file' => $remoteFile];
+        return [
+            'ok' => false,
+            'message' => 'Fail remote kosong atau muat turun tidak menghasilkan fail tempatan.',
+            'remote_file' => $remoteFile,
+        ];
     }
     @chmod($localFile, 0644);
 
