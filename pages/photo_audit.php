@@ -1,7 +1,7 @@
 <?php
 /**
- * Zurie Audit Gambar MIS - Fasa 6
- * Audit kewujudan + penilaian kualiti + auto repair ringan + WhatsApp pelajar.
+ * Zurie Semakan Foto Kad Matrik
+ * Paparan minimal berasaskan aliran kerja: foto, upload, kad dan RFID.
  */
 
 declare(strict_types=1);
@@ -371,8 +371,6 @@ SELECT DISTINCT ON (UPPER(TRIM(COALESCE(personal.nomatrik, ''))))
         '[^0-9]', '', 'g'
     ) AS nohp,
     TRIM(COALESCE(personal.jantina, '')) AS jantina,
-    TRIM(COALESCE(personal.cardno, '')) AS no_cetakan_kad,
-    TRIM(COALESCE(personal.em_cardno, '')) AS uid_rfid,
     CASE
         WHEN b.blok_nama IS NOT NULL THEN
             CONCAT(
@@ -390,6 +388,8 @@ SELECT DISTINCT ON (UPPER(TRIM(COALESCE(personal.nomatrik, ''))))
     TRIM(COALESCE(e.english_nama, '')) AS english,
     TRIM(COALESCE(kk.koko_nama, '')) AS kokurikulum,
     TRIM(COALESCE(jp.jp_jurusan, '')) AS jurusan,
+    TRIM(COALESCE(personal.cardno, '')) AS cardno,
+    TRIM(COALESCE(personal.em_cardno, '')) AS em_cardno,
     'AKTIF'::text AS status,
     TRIM(CAST(pelajar.stud_intake AS TEXT)) AS stud_intake,
     pelajar.stud_semester AS stud_semester,
@@ -496,8 +496,8 @@ function audit_attach_pg_active(array $rows): array
 
     $byMatrik = is_array($snapshot['by_matrik'] ?? null) ? $snapshot['by_matrik'] : [];
     $currentFields = [
-        'nama', 'nokp', 'nohp', 'jantina', 'no_cetakan_kad', 'uid_rfid', 'asrama', 'kuliah', 'praktikum',
-        'tutoran', 'english', 'kokurikulum', 'jurusan',
+        'nama', 'nokp', 'nohp', 'jantina', 'asrama', 'kuliah', 'praktikum',
+        'tutoran', 'english', 'kokurikulum', 'jurusan', 'cardno', 'em_cardno',
         'stud_intake', 'stud_semester', 'stud_status',
     ];
 
@@ -633,6 +633,148 @@ function audit_filter_options_from_rows(array $rows): array
 }
 
 /**
+ * Ringkaskan semua status teknikal kepada satu status kerja yang mudah difahami.
+ *
+ * @return array{key:string,label:string,class:string,reason:string}
+ */
+function audit_workflow_state(array $row): array
+{
+    $checked = trim((string)($row['checked_at'] ?? '')) !== '';
+    $exists = (int)($row['photo_exists'] ?? 0) === 1;
+    $quality = strtolower(trim((string)($row['quality_status'] ?? '')));
+    $background = strtolower(trim((string)($row['background_status'] ?? '')));
+    $uploadStatus = strtolower(trim((string)($row['upload_status'] ?? '')));
+    $syncStatus = strtolower(trim((string)($row['sync_status'] ?? '')));
+
+    if (!$checked) {
+        return [
+            'key' => 'review',
+            'label' => 'Perlu Semakan',
+            'class' => 'state-review',
+            'reason' => 'Audit gambar belum dijalankan.',
+        ];
+    }
+
+    if (!$exists) {
+        return [
+            'key' => 'missing',
+            'label' => 'Tiada Gambar',
+            'class' => 'state-missing',
+            'reason' => 'Gambar tidak ditemui dalam MIS.',
+        ];
+    }
+
+    if (in_array($uploadStatus, ['baru', 'pending_registration'], true)) {
+        return [
+            'key' => 'upload',
+            'label' => 'Upload Baharu',
+            'class' => 'state-upload',
+            'reason' => $uploadStatus === 'pending_registration'
+                ? 'Gambar diterima dan menunggu pendaftaran fizikal pelajar.'
+                : 'Gambar baharu menunggu semakan admin.',
+        ];
+    }
+
+    if ($uploadStatus === 'tolak') {
+        $reason = trim((string)($row['reject_reason'] ?? ''));
+        return [
+            'key' => 'review',
+            'label' => 'Perlu Semakan',
+            'class' => 'state-review',
+            'reason' => $reason !== '' ? 'Gambar upload ditolak: ' . $reason : 'Gambar upload telah ditolak.',
+        ];
+    }
+
+    if ($syncStatus === 'gagal') {
+        return [
+            'key' => 'review',
+            'label' => 'Perlu Semakan',
+            'class' => 'state-review',
+            'reason' => 'Gambar gagal dihantar ke MIS.',
+        ];
+    }
+
+    if ($uploadStatus === 'lulus' && $syncStatus !== 'berjaya') {
+        return [
+            'key' => 'review',
+            'label' => 'Perlu Semakan',
+            'class' => 'state-review',
+            'reason' => 'Gambar telah lulus tetapi belum dihantar ke MIS.',
+        ];
+    }
+
+    if ($quality === 'repair') {
+        return [
+            'key' => 'review',
+            'label' => 'Perlu Semakan',
+            'class' => 'state-review',
+            'reason' => trim((string)($row['quality_reason'] ?? '')) ?: 'Gambar memerlukan pembaikan.',
+        ];
+    }
+
+    if ($quality === 'upload_baru') {
+        return [
+            'key' => 'review',
+            'label' => 'Perlu Semakan',
+            'class' => 'state-review',
+            'reason' => trim((string)($row['quality_reason'] ?? '')) ?: 'Pelajar perlu memuat naik gambar baharu.',
+        ];
+    }
+
+    if (in_array($background, ['semak', 'tolak', 'gagal'], true)) {
+        $reason = trim((string)($row['background_reason'] ?? ''));
+        $fallback = match ($background) {
+            'tolak' => 'Latar belakang gambar tidak sesuai.',
+            'gagal' => 'Analisis gambar gagal dan perlu disemak.',
+            default => 'Gambar memerlukan semakan manual.',
+        };
+        return [
+            'key' => 'review',
+            'label' => 'Perlu Semakan',
+            'class' => 'state-review',
+            'reason' => $reason !== '' ? $reason : $fallback,
+        ];
+    }
+
+    if ($quality === '' || $background === '') {
+        return [
+            'key' => 'review',
+            'label' => 'Perlu Semakan',
+            'class' => 'state-review',
+            'reason' => 'Gambar ada tetapi penilaian belum lengkap.',
+        ];
+    }
+
+    // Maklumat kad hanya digunakan apabila rekod datang daripada roster PostgreSQL aktif.
+    if ((int)($row['pg_active'] ?? 0) === 1) {
+        $cardNo = trim((string)($row['cardno'] ?? ''));
+        $rfidUid = trim((string)($row['em_cardno'] ?? ''));
+        if ($cardNo === '' || $rfidUid === '') {
+            if ($cardNo === '' && $rfidUid === '') {
+                $reason = 'No. cetakan kad dan UID RFID belum direkod.';
+            } elseif ($cardNo === '') {
+                $reason = 'No. cetakan kad belum direkod.';
+            } else {
+                $reason = 'UID RFID belum didaftarkan.';
+            }
+            return [
+                'key' => 'card',
+                'label' => 'Kad Belum Lengkap',
+                'class' => 'state-card',
+                'reason' => $reason,
+            ];
+        }
+    }
+
+    return [
+        'key' => 'completed',
+        'label' => 'Selesai',
+        'class' => 'state-completed',
+        'reason' => 'Gambar dan maklumat kad telah lengkap.',
+    ];
+}
+
+/**
  * @param array<int,array<string,mixed>> $rows
  * @return array<string,int>
  */
@@ -656,6 +798,13 @@ function audit_compute_stats(array $rows): array
         'bg_failed' => 0,
         'perlu_whatsapp' => 0,
         'sudah_whatsapp' => 0,
+        'simple_missing' => 0,
+        'simple_review' => 0,
+        'simple_upload' => 0,
+        'simple_review_total' => 0,
+        'simple_card' => 0,
+        'simple_completed' => 0,
+        'simple_attention' => 0,
     ];
     foreach ($rows as $row) {
         $checked = trim((string)($row['checked_at'] ?? '')) !== '';
@@ -699,6 +848,25 @@ function audit_compute_stats(array $rows): array
             if ((int)($row['whatsapp_sent'] ?? 0) === 1) {
                 $stats['sudah_whatsapp']++;
             }
+        }
+
+        $workflow = audit_workflow_state($row);
+        $workflowKey = (string)($workflow['key'] ?? 'review');
+        if ($workflowKey === 'missing') {
+            $stats['simple_missing']++;
+        } elseif ($workflowKey === 'upload') {
+            $stats['simple_upload']++;
+            $stats['simple_review_total']++;
+        } elseif ($workflowKey === 'review') {
+            $stats['simple_review']++;
+            $stats['simple_review_total']++;
+        } elseif ($workflowKey === 'card') {
+            $stats['simple_card']++;
+        } elseif ($workflowKey === 'completed') {
+            $stats['simple_completed']++;
+        }
+        if ($workflowKey !== 'completed') {
+            $stats['simple_attention']++;
         }
     }
     return $stats;
@@ -1775,14 +1943,16 @@ function quality_badge(?string $status): array
 
 $messages = [];
 $errors = [];
-$filter = (string)($_GET['filter'] ?? 'bg_pending');
+$filter = (string)($_GET['filter'] ?? 'attention');
 $allowedFilters = [
-    'quality_pending', 'good', 'repair', 'upload_new', 'missing',
+    'attention', 'missing', 'review_all', 'review', 'upload', 'card', 'completed', 'all',
+    // Kekalkan pautan lama supaya bookmark atau URL terdahulu tidak rosak.
+    'quality_pending', 'good', 'repair', 'upload_new',
     'bg_pending', 'bg_ok', 'bg_review', 'bg_reject', 'bg_failed',
-    'wa_pending', 'wa_sent', 'exists', 'unchecked', 'all',
+    'wa_pending', 'wa_sent', 'exists', 'unchecked',
 ];
 if (!in_array($filter, $allowedFilters, true)) {
-    $filter = 'bg_pending';
+    $filter = 'attention';
 }
 $search = trim(substr((string)($_GET['q'] ?? ''), 0, 120));
 $perPage = 50;
@@ -1867,7 +2037,7 @@ try {
             $result = run_photo_audit($pdo, $action === 'audit_sample' ? 50 : 0);
             $messages[] = 'Audit selesai. Disemak: ' . $result['total'] .
                 ', Ada gambar: ' . $result['exists'] . ', Tiada gambar: ' . $result['missing'] . '.';
-            $filter = 'quality_pending';
+            $filter = 'attention';
         } elseif ($action === 'mark_whatsapp' || $action === 'unmark_whatsapp') {
             $matrik = clean_matrik_audit((string)($_POST['matrik'] ?? ''));
             if ($matrik === '') {
@@ -1955,12 +2125,12 @@ try {
         } elseif ($action === 'clear_audit') {
             $pdo->exec("TRUNCATE TABLE student_photo_audit");
             $messages[] = 'Data audit gambar telah dikosongkan untuk batch baru.';
-            $filter = 'unchecked';
+            $filter = 'attention';
         } elseif ($action === 'clear_audit_uploads') {
             $pdo->exec("TRUNCATE TABLE student_photo_audit");
             $pdo->exec("TRUNCATE TABLE student_photo_uploads");
             $messages[] = 'Data audit dan rekod upload telah dikosongkan. Fail gambar fizikal tidak dipadam.';
-            $filter = 'unchecked';
+            $filter = 'attention';
         } else {
             throw new RuntimeException('Tindakan tidak dikenali.');
         }
@@ -2004,44 +2174,6 @@ try {
     $filterOptions['intake'] = array_values(array_unique($filterOptions['intake']));
     $stats = audit_compute_stats($allActiveRows);
 
-    // Ringkasan mudah untuk mengesan kad yang berkemungkinan belum selesai.
-    // UID RFID rasmi disimpan di PostgreSQL personal.em_cardno.
-    $kadSemakanRows = [];
-    foreach ($allActiveRows as $kadRow) {
-        $uidRfid = trim((string)($kadRow['uid_rfid'] ?? ''));
-        if ($uidRfid !== '') {
-            continue;
-        }
-
-        $photoExists = (int)($kadRow['photo_exists'] ?? 0) === 1;
-        $qualityStatus = strtolower(trim((string)($kadRow['quality_status'] ?? '')));
-        $backgroundStatus = strtolower(trim((string)($kadRow['background_status'] ?? '')));
-
-        if (!$photoExists) {
-            $kadRow['kad_issue_status'] = 'Tiada Gambar';
-            $kadRow['kad_issue_reason'] = 'Gambar belum dimuat naik atau belum dijumpai dalam MIS.';
-        } elseif (in_array($qualityStatus, ['upload_baru', 'tolak', 'reject', 'rejected'], true)
-            || in_array($backgroundStatus, ['reject', 'rejected', 'failed', 'manual', 'review'], true)) {
-            $kadRow['kad_issue_status'] = 'Gambar Bermasalah';
-            $kadRow['kad_issue_reason'] = trim((string)($kadRow['background_reason'] ?? $kadRow['quality_reason'] ?? ''))
-                ?: 'Gambar perlu disemak sebelum cetakan kad.';
-        } else {
-            $kadRow['kad_issue_status'] = 'RFID Belum Daftar';
-            $kadRow['kad_issue_reason'] = 'Gambar tersedia tetapi UID RFID belum direkodkan.';
-        }
-        $kadSemakanRows[] = $kadRow;
-    }
-    usort($kadSemakanRows, static function (array $a, array $b): int {
-        $priority = ['Tiada Gambar' => 1, 'Gambar Bermasalah' => 2, 'RFID Belum Daftar' => 3];
-        $pa = $priority[(string)($a['kad_issue_status'] ?? '')] ?? 9;
-        $pb = $priority[(string)($b['kad_issue_status'] ?? '')] ?? 9;
-        return $pa === $pb
-            ? strcasecmp((string)($a['nama'] ?? ''), (string)($b['nama'] ?? ''))
-            : ($pa <=> $pb);
-    });
-    $kadSemakanCount = count($kadSemakanRows);
-    $kadSemakanDisplay = array_slice($kadSemakanRows, 0, 50);
-
     $tabRows = array_values(array_filter($allActiveRows, static function (array $row) use ($filter): bool {
         $checked = trim((string)($row['checked_at'] ?? '')) !== '';
         $exists = (int)($row['photo_exists'] ?? 0) === 1;
@@ -2050,12 +2182,20 @@ try {
         $backgroundStatus = trim((string)($row['background_status'] ?? ''));
         $waContext = audit_whatsapp_context($row);
 
+        $workflowKey = (string)(audit_workflow_state($row)['key'] ?? 'review');
+
         return match ($filter) {
+            'attention' => $workflowKey !== 'completed',
+            'missing' => $workflowKey === 'missing',
+            'review_all' => in_array($workflowKey, ['review', 'upload'], true),
+            'review' => $workflowKey === 'review',
+            'upload' => $workflowKey === 'upload',
+            'card' => $workflowKey === 'card',
+            'completed' => $workflowKey === 'completed',
             'quality_pending' => $exists && $quality === '',
             'good' => $quality === 'baik',
             'repair' => $quality === 'repair',
             'upload_new' => $quality === 'upload_baru',
-            'missing' => $checked && !$exists,
             'bg_pending' => $exists && $backgroundStatus === '',
             'bg_ok' => in_array($backgroundStatus, ['putih', 'hampir_putih'], true),
             'bg_review' => $backgroundStatus === 'semak',
@@ -2131,533 +2271,279 @@ $pdfParams = array_merge(
 );
 $pdfParams = array_filter($pdfParams, static fn($value): bool => $value !== '');
 $pdfDownloadUrl = '?' . http_build_query($pdfParams);
-$resetAdvancedUrl = '?filter=' . rawurlencode($filter);
+$resetAdvancedUrl = '?filter=attention';
 ?>
 <!DOCTYPE html>
 <html lang="ms">
 <head>
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1.0">
-<title>Audit & Kualiti Gambar MIS | Zurie</title>
+<title>Semakan Foto Kad Matrik | Zurie</title>
 <style>
-body{font-family:Arial,sans-serif;background:#f4f7fb;margin:0;color:#0f172a}.wrap{max-width:1320px;margin:24px auto;padding:0 14px}.card{background:#fff;border-radius:16px;padding:18px;box-shadow:0 9px 28px rgba(15,23,42,.08);margin-bottom:14px}.top{display:flex;justify-content:space-between;gap:12px;align-items:center;flex-wrap:wrap}.title{font-size:25px;font-weight:800;margin:0}.muted{color:#64748b}.stats{display:grid;grid-template-columns:repeat(5,1fr);gap:10px}.stat{background:#f8fafc;border:1px solid #e2e8f0;border-radius:12px;padding:12px}.stat b{display:block;font-size:22px}.toolbar{display:flex;gap:7px;flex-wrap:wrap;align-items:center}.tab,.btn{border:0;border-radius:9px;padding:9px 11px;font-weight:700;text-decoration:none;display:inline-block}.tab{background:#e2e8f0;color:#0f172a}.tab.active{background:#2563eb;color:#fff}.btn{background:#2563eb;color:#fff;cursor:pointer}.btn.warn{background:#b45309}.btn.danger{background:#dc2626}.btn.ghost{background:#f1f5f9;color:#0f172a}.btn.good{background:#15803d}.btn.repair{background:#7c3aed}.btn.upload{background:#ea580c}.btn.bg{background:#0369a1}.btn.wa{background:#16a34a;font-size:11px;padding:6px 8px}.btn.mini{font-size:11px;padding:6px 8px}.btn.reset{background:#64748b}.btn.pdf{background:#991b1b}.alert{padding:11px 13px;border-radius:11px;margin-bottom:11px}.err{background:#fee2e2;color:#991b1b}.ok{background:#dcfce7;color:#166534}input[type=text],select{padding:9px;border:1px solid #cbd5e1;border-radius:9px;background:#fff;color:#0f172a}select{min-width:130px}.filter-panel{display:grid;grid-template-columns:1.3fr repeat(6,minmax(125px,1fr)) auto auto;gap:9px;align-items:end;margin-top:14px;padding-top:14px;border-top:1px solid #e2e8f0}.filter-field{display:flex;flex-direction:column;gap:5px}.filter-field label{font-size:11px;font-weight:800;color:#475569;text-transform:uppercase}.filter-field.search-field input{width:100%;box-sizing:border-box}.filter-result{display:flex;gap:8px;align-items:center;flex-wrap:wrap;margin-top:10px}.filter-chip{background:#eff6ff;color:#1d4ed8;border:1px solid #bfdbfe;border-radius:999px;padding:5px 9px;font-size:11px;font-weight:700}.filter-count{font-weight:800;color:#0f172a}.table-wrap{overflow:auto}table{width:100%;border-collapse:collapse;min-width:1250px}th,td{padding:10px;border-bottom:1px solid #e2e8f0;text-align:left;vertical-align:top}th{font-size:12px;text-transform:uppercase;color:#475569;background:#f8fafc}.thumb{width:82px;height:102px;object-fit:cover;border-radius:9px;border:1px solid #cbd5e1;background:#f8fafc}.badge{padding:5px 8px;border-radius:999px;font-weight:800;font-size:11px;display:inline-block}.yes,.quality-good{background:#dcfce7;color:#166534}.no,.quality-missing{background:#fee2e2;color:#991b1b}.wait,.quality-pending{background:#e2e8f0;color:#334155}.quality-repair{background:#ede9fe;color:#5b21b6}.quality-upload{background:#ffedd5;color:#9a3412}.bg-good{background:#dcfce7;color:#166534}.bg-near{background:#ecfccb;color:#3f6212}.bg-review{background:#fef3c7;color:#92400e}.bg-reject{background:#fee2e2;color:#991b1b}.bg-failed{background:#f1f5f9;color:#475569}.bg-pending{background:#e0f2fe;color:#075985}.bg-details{margin-top:6px;padding:7px 8px;border-radius:8px;background:#f8fafc;border:1px solid #e2e8f0}.color-dot{display:inline-block;width:12px;height:12px;border-radius:50%;border:1px solid #94a3b8;vertical-align:-2px;margin-right:4px}.baru{background:#fef3c7;color:#92400e}.lulus{background:#dcfce7;color:#166534}.tolak{background:#fee2e2;color:#991b1b}.small{font-size:11px;color:#64748b}.action-row{display:flex;gap:5px;flex-wrap:wrap;margin-bottom:6px}.action-row form{margin:0}.wa-line{display:flex;gap:5px;align-items:center;margin-top:6px}.wa-box{width:17px;height:17px;border:1px solid #94a3b8;border-radius:4px;background:#fff;display:inline-flex;align-items:center;justify-content:center;font-size:13px;font-weight:900;color:#16a34a}.wa-box.sent{border-color:#16a34a;background:#dcfce7}.wa-cancel{border:0;background:#fee2e2;color:#991b1b;border-radius:999px;width:17px;height:17px;cursor:pointer;font-weight:900;font-size:11px;padding:0}.wa-time{font-size:10px;color:#64748b}.breadcrumb{display:flex;gap:7px;align-items:center;flex-wrap:wrap;font-size:13px;margin-bottom:11px}.breadcrumb a{color:#2563eb;text-decoration:none;font-weight:700}.breadcrumb span{color:#64748b}.bulk{position:sticky;top:0;z-index:5;background:#fff;border:1px solid #dbeafe}.quality-guide{display:grid;grid-template-columns:repeat(4,1fr);gap:8px}.guide{border:1px solid #e2e8f0;border-radius:10px;padding:10px;font-size:12px}.guide b{display:block;margin-bottom:4px}.source-grid{display:grid;grid-template-columns:repeat(6,1fr);gap:9px;margin-top:12px}.source-stat{border:1px solid #dbeafe;background:#f8fbff;border-radius:11px;padding:10px}.source-stat span{display:block;font-size:11px;color:#64748b}.source-stat b{font-size:20px}.source-note{margin-top:10px;padding:9px 11px;border-radius:9px;background:#fff7ed;color:#9a3412;border:1px solid #fed7aa;font-size:12px}.source-ok{background:#ecfdf5;color:#166534;border-color:#bbf7d0}@media(max-width:1180px){.filter-panel{grid-template-columns:repeat(4,minmax(140px,1fr))}.filter-field.search-field{grid-column:span 2}}@media(max-width:950px){.stats,.quality-guide,.source-grid{grid-template-columns:repeat(2,1fr)}.filter-panel{grid-template-columns:repeat(2,minmax(140px,1fr))}.filter-field.search-field{grid-column:span 2}}@media(max-width:600px){.source-grid{grid-template-columns:1fr 1fr}.filter-panel{grid-template-columns:1fr}.filter-field.search-field{grid-column:span 1}.filter-panel .btn{width:100%;text-align:center}}
-
-/* Fasa 7.1: paparan ringkas + kategori automatik + 50 rekod setiap halaman */
-.top-actions{display:flex;gap:8px;flex-wrap:wrap}.admin-panel{padding:0;overflow:hidden}.admin-panel>summary{cursor:pointer;list-style:none;padding:15px 18px;font-weight:800;color:#1e3a8a;background:#eff6ff;border-radius:14px}.admin-panel>summary::-webkit-details-marker{display:none}.admin-panel>summary:after{content:'Buka';float:right;font-size:11px;background:#dbeafe;color:#1d4ed8;padding:4px 8px;border-radius:999px}.admin-panel[open]>summary:after{content:'Tutup'}.admin-panel .admin-body{padding:14px}.quick-stats{display:grid;grid-template-columns:repeat(6,minmax(130px,1fr));gap:10px}.quick-stat{display:block;text-decoration:none;background:#fff;border:1px solid #dbeafe;border-radius:13px;padding:12px;color:#0f172a;transition:.15s}.quick-stat:hover{border-color:#60a5fa;transform:translateY(-1px)}.quick-stat.active{background:#eff6ff;border-color:#2563eb}.quick-stat span{display:block;font-size:11px;color:#64748b}.quick-stat b{font-size:22px}.category-bar{display:grid;grid-template-columns:minmax(230px,1fr) minmax(260px,2fr) auto auto;gap:10px;align-items:end}.category-bar .filter-field select,.category-bar .filter-field input{width:100%;box-sizing:border-box}.advanced-filter{margin-top:12px;border-top:1px solid #e2e8f0;padding-top:10px}.advanced-filter>summary{cursor:pointer;font-weight:800;color:#475569}.advanced-filter .filter-panel{margin-top:10px;padding-top:0;border-top:0}.pagination-wrap{display:flex;justify-content:space-between;gap:12px;align-items:center;flex-wrap:wrap}.pagination{display:flex;gap:6px;align-items:center;flex-wrap:wrap}.page-link{display:inline-flex;min-width:34px;height:34px;align-items:center;justify-content:center;padding:0 9px;border-radius:8px;background:#e2e8f0;color:#0f172a;text-decoration:none;font-weight:800}.page-link.active{background:#2563eb;color:#fff}.page-link.disabled{opacity:.45;pointer-events:none}.compact-note{margin-top:8px;padding:9px 11px;background:#f8fafc;border:1px solid #e2e8f0;border-radius:9px;font-size:12px;color:#475569}
-@media(max-width:1100px){.quick-stats{grid-template-columns:repeat(3,1fr)}.category-bar{grid-template-columns:1fr 1fr auto auto}}
-@media(max-width:700px){.quick-stats{grid-template-columns:repeat(2,1fr)}.category-bar{grid-template-columns:1fr}.category-bar .btn{width:100%;text-align:center}}
-
-.row-more{display:inline-block;position:relative}.row-more>summary,.score-more>summary{cursor:pointer;list-style:none;font-size:11px;font-weight:800;color:#1d4ed8;background:#eff6ff;border-radius:8px;padding:6px 8px}.row-more>summary::-webkit-details-marker,.score-more>summary::-webkit-details-marker{display:none}.row-more[open] .row-menu{display:flex}.row-menu{margin-top:6px;display:flex;gap:5px;flex-wrap:wrap;padding:7px;background:#f8fafc;border:1px solid #dbeafe;border-radius:9px}.score-more{margin-top:6px}.score-more .small{display:block;margin-top:5px}
-/* Fasa 7.2: satu klik nilai semua, batch automatik dan kategori berwarna */
-.quick-stat.cat-pending{background:#eff6ff;border-color:#93c5fd}.quick-stat.cat-pending span,.quick-stat.cat-pending b{color:#1d4ed8}.quick-stat.cat-ok{background:#ecfdf5;border-color:#86efac}.quick-stat.cat-ok span,.quick-stat.cat-ok b{color:#15803d}.quick-stat.cat-review{background:#fffbeb;border-color:#fcd34d}.quick-stat.cat-review span,.quick-stat.cat-review b{color:#a16207}.quick-stat.cat-reject{background:#fef2f2;border-color:#fca5a5}.quick-stat.cat-reject span,.quick-stat.cat-reject b{color:#b91c1c}.quick-stat.cat-failed{background:#f8fafc;border-color:#cbd5e1}.quick-stat.cat-failed span,.quick-stat.cat-failed b{color:#475569}.quick-stat.cat-missing{background:#f1f5f9;border-color:#94a3b8}.quick-stat.cat-missing span,.quick-stat.cat-missing b{color:#334155}.auto-eval-card{border:1px solid #bfdbfe;background:linear-gradient(135deg,#eff6ff 0%,#ffffff 62%)}.auto-eval-title{display:flex;gap:10px;align-items:center}.auto-eval-icon{display:grid;place-items:center;width:42px;height:42px;border-radius:12px;background:#2563eb;color:#fff;font-size:22px}.auto-eval-actions{display:flex;gap:8px;flex-wrap:wrap}.auto-progress{margin-top:14px;padding:13px;border-radius:12px;background:#fff;border:1px solid #dbeafe}.auto-progress[hidden]{display:none}.progress-track{height:12px;border-radius:999px;background:#e2e8f0;overflow:hidden}.progress-fill{height:100%;width:0;background:linear-gradient(90deg,#2563eb,#22c55e);transition:width .25s}.auto-progress-head{display:flex;justify-content:space-between;gap:10px;align-items:center;margin-bottom:8px;flex-wrap:wrap}.auto-counts{display:grid;grid-template-columns:repeat(5,minmax(100px,1fr));gap:8px;margin-top:10px}.auto-count{padding:9px;border-radius:10px;text-align:center;font-weight:800}.auto-count span{display:block;font-size:10px;text-transform:uppercase;margin-bottom:3px}.auto-count.pending{background:#dbeafe;color:#1d4ed8}.auto-count.accepted{background:#dcfce7;color:#166534}.auto-count.review{background:#fef3c7;color:#92400e}.auto-count.rejected{background:#fee2e2;color:#991b1b}.auto-count.failed{background:#e2e8f0;color:#475569}.auto-log{margin-top:8px;font-size:12px;color:#475569}.btn.auto-start{background:#1d4ed8}.btn.auto-stop{background:#64748b}tr.row-bg-pending td:first-child{border-left:4px solid #60a5fa}tr.row-bg-ok td:first-child{border-left:4px solid #22c55e}tr.row-bg-review td:first-child{border-left:4px solid #f59e0b}tr.row-bg-reject td:first-child{border-left:4px solid #ef4444}tr.row-bg-failed td:first-child{border-left:4px solid #94a3b8}@media(max-width:760px){.auto-counts{grid-template-columns:repeat(2,1fr)}}
+:root{--bg:#f5f7fb;--surface:#fff;--border:#e2e8f0;--text:#0f172a;--muted:#64748b;--navy:#173b67;--blue:#2563eb;--blue-soft:#eff6ff;--red:#b42318;--red-soft:#fff1f0;--amber:#9a6700;--amber-soft:#fff8e6;--green:#18794e;--green-soft:#ecfdf3;--purple:#6941c6;--purple-soft:#f4f3ff}
+*{box-sizing:border-box}body{margin:0;background:var(--bg);color:var(--text);font-family:Inter,"Segoe UI",Arial,sans-serif}.wrap{max-width:1240px;margin:28px auto;padding:0 18px}.panel{background:var(--surface);border:1px solid var(--border);border-radius:16px;padding:20px;margin-bottom:16px;box-shadow:0 5px 18px rgba(15,23,42,.04)}.breadcrumb{display:flex;gap:7px;align-items:center;font-size:13px;margin-bottom:14px;color:var(--muted)}.breadcrumb a{color:var(--blue);font-weight:700;text-decoration:none}.page-head{display:flex;align-items:flex-start;justify-content:space-between;gap:18px;flex-wrap:wrap}.page-title{margin:0 0 6px;font-size:27px;line-height:1.15;letter-spacing:-.02em}.subtitle{margin:0;color:var(--muted);font-size:14px}.head-actions,.inline-actions{display:flex;align-items:center;gap:8px;flex-wrap:wrap}.btn{appearance:none;border:0;border-radius:9px;padding:10px 13px;background:var(--blue);color:#fff;font-weight:750;font-size:13px;line-height:1;text-decoration:none;cursor:pointer;display:inline-flex;align-items:center;justify-content:center;gap:6px}.btn:hover{filter:brightness(.97)}.btn.secondary{background:#eef2f7;color:#1e293b}.btn.subtle{background:#fff;color:#334155;border:1px solid var(--border)}.btn.danger{background:#b42318}.btn.warn{background:#b45309}.btn.good{background:#15803d}.btn.repair{background:#6d28d9}.btn.upload{background:#c2410c}.btn.wa{background:#15803d}.btn.small{padding:7px 9px;font-size:11px}.alert{border-radius:11px;padding:11px 13px;margin-bottom:12px;font-size:13px}.alert.ok{background:var(--green-soft);color:var(--green);border:1px solid #bbf7d0}.alert.err{background:var(--red-soft);color:var(--red);border:1px solid #fecaca}.summary-grid{display:grid;grid-template-columns:repeat(3,minmax(0,1fr));gap:12px}.summary-card{display:block;text-decoration:none;color:inherit;border:1px solid var(--border);border-radius:14px;padding:16px;background:#fff;transition:.15s}.summary-card:hover{transform:translateY(-1px);border-color:#a8b7ca}.summary-card.active{box-shadow:0 0 0 2px rgba(37,99,235,.12)}.summary-card span{display:block;color:var(--muted);font-size:12px;font-weight:700}.summary-card b{display:block;font-size:27px;margin:7px 0 3px}.summary-card small{color:var(--muted)}.summary-card.missing{border-top:3px solid #d92d20}.summary-card.review{border-top:3px solid #f59e0b}.summary-card.card-status{border-top:3px solid #7c3aed}.progress-note{margin-top:13px;color:var(--muted);font-size:12px}.filters{display:grid;grid-template-columns:minmax(190px,.8fr) minmax(280px,1.5fr) minmax(170px,.7fr) auto auto;gap:10px;align-items:end}.field{display:flex;flex-direction:column;gap:6px}.field label{font-size:11px;text-transform:uppercase;letter-spacing:.04em;font-weight:800;color:#475569}.field input,.field select{width:100%;height:40px;border:1px solid #cbd5e1;border-radius:9px;padding:0 11px;background:#fff;color:var(--text)}.result-line{margin-top:12px;color:var(--muted);font-size:12px}.table-panel{padding:0;overflow:hidden}.table-scroll{overflow:auto}table{width:100%;border-collapse:collapse;min-width:980px}th{padding:12px 14px;background:#f8fafc;color:#475569;text-transform:uppercase;letter-spacing:.035em;font-size:11px;text-align:left;border-bottom:1px solid var(--border)}td{padding:14px;border-bottom:1px solid var(--border);vertical-align:top;font-size:13px}tbody tr:hover{background:#fbfdff}.photo{width:68px;height:86px;border-radius:10px;object-fit:cover;border:1px solid #cbd5e1;background:#f8fafc}.photo-empty{width:68px;height:86px;border-radius:10px;border:1px dashed #cbd5e1;background:#f8fafc;display:grid;place-items:center;color:#94a3b8;font-size:11px;text-align:center;padding:6px}.student-name{display:block;font-weight:800;margin-bottom:4px}.student-meta{display:block;color:var(--muted);font-size:11px;line-height:1.55}.state{display:inline-flex;align-items:center;border-radius:999px;padding:6px 9px;font-size:11px;font-weight:800;white-space:nowrap}.state-missing{background:var(--red-soft);color:var(--red)}.state-review{background:var(--amber-soft);color:var(--amber)}.state-upload{background:var(--blue-soft);color:#1d4ed8}.state-card{background:var(--purple-soft);color:var(--purple)}.state-completed{background:var(--green-soft);color:var(--green)}.reason{max-width:310px;line-height:1.5}.card-lines{display:grid;gap:5px}.card-line{display:flex;align-items:center;gap:6px}.card-line strong{font-size:11px;min-width:54px;color:#475569}.value-ok{font-family:ui-monospace,SFMono-Regular,Consolas,monospace;font-size:11px;color:#166534}.value-missing{font-size:11px;color:var(--red);font-weight:750}.row-actions{display:flex;gap:7px;flex-wrap:wrap;align-items:flex-start}.row-details,.row-more{position:relative}.row-details>summary,.row-more>summary{cursor:pointer;list-style:none;border-radius:8px;padding:7px 9px;background:#f1f5f9;color:#334155;font-size:11px;font-weight:800}.row-details>summary::-webkit-details-marker,.row-more>summary::-webkit-details-marker{display:none}.details-box,.more-box{margin-top:7px;padding:10px;border:1px solid var(--border);border-radius:10px;background:#f8fafc;min-width:230px;color:#475569;font-size:11px;line-height:1.6}.more-box{display:flex;gap:6px;flex-wrap:wrap}.more-box button{margin:0}.muted{color:var(--muted)}.settings{padding:0;overflow:hidden}.settings>summary{cursor:pointer;list-style:none;padding:16px 20px;font-weight:800;color:var(--navy);display:flex;justify-content:space-between;align-items:center}.settings>summary::-webkit-details-marker{display:none}.settings>summary:after{content:'Buka';font-size:11px;color:var(--blue);background:var(--blue-soft);padding:5px 8px;border-radius:999px}.settings[open]>summary:after{content:'Tutup'}.settings-body{padding:0 20px 20px;border-top:1px solid var(--border)}.settings-section{padding-top:17px}.settings-section+.settings-section{margin-top:17px;border-top:1px solid var(--border)}.settings-section h3{margin:0 0 5px;font-size:15px}.settings-section p{margin:0 0 12px;color:var(--muted);font-size:12px}.source-row{display:grid;grid-template-columns:repeat(4,minmax(0,1fr));gap:8px;margin-top:12px}.source-item{border:1px solid var(--border);border-radius:10px;padding:10px;background:#f8fafc}.source-item span{display:block;color:var(--muted);font-size:10px}.source-item b{font-size:19px}.guide-row{display:grid;grid-template-columns:repeat(3,minmax(0,1fr));gap:8px}.guide-item{border:1px solid var(--border);border-radius:10px;padding:10px;font-size:12px;color:#475569}.auto-progress{margin-top:12px;padding:12px;border:1px solid #bfdbfe;background:#fff;border-radius:11px}.auto-progress[hidden]{display:none}.progress-head{display:flex;justify-content:space-between;gap:8px;margin-bottom:8px;font-size:12px}.progress-track{height:9px;border-radius:999px;background:#e2e8f0;overflow:hidden}.progress-fill{height:100%;width:0;background:#2563eb;transition:width .2s}.auto-counts{display:grid;grid-template-columns:repeat(5,1fr);gap:6px;margin-top:9px}.auto-count{padding:7px;border-radius:8px;text-align:center;background:#f8fafc;font-size:10px}.auto-count b{display:block;font-size:15px;margin-top:2px}.pagination-wrap{display:flex;justify-content:space-between;gap:12px;align-items:center;flex-wrap:wrap;padding:15px 18px}.pagination{display:flex;gap:5px;align-items:center;flex-wrap:wrap}.page-link{display:inline-flex;min-width:32px;height:32px;align-items:center;justify-content:center;padding:0 8px;border-radius:8px;background:#e2e8f0;color:#0f172a;text-decoration:none;font-weight:800;font-size:12px}.page-link.active{background:var(--blue);color:#fff}.page-link.disabled{opacity:.4;pointer-events:none}.small{font-size:11px;color:var(--muted)}.wa-line{display:flex;gap:5px;align-items:center;margin-top:6px}.wa-box{width:17px;height:17px;border:1px solid #94a3b8;border-radius:4px;background:#fff;display:inline-flex;align-items:center;justify-content:center;font-size:12px;font-weight:900;color:#16a34a}.wa-box.sent{border-color:#16a34a;background:#dcfce7}.wa-cancel{border:0;background:#fee2e2;color:#991b1b;border-radius:999px;width:17px;height:17px;cursor:pointer;font-weight:900;font-size:11px;padding:0}.wa-time{font-size:10px;color:#64748b}
+@media(max-width:900px){.summary-grid{grid-template-columns:1fr}.filters{grid-template-columns:1fr 1fr}.filters .field:nth-child(2){grid-column:span 2}.source-row,.guide-row{grid-template-columns:repeat(2,1fr)}}
+@media(max-width:620px){.wrap{padding:0 10px;margin:14px auto}.panel{padding:15px}.page-title{font-size:23px}.filters{grid-template-columns:1fr}.filters .field:nth-child(2){grid-column:span 1}.filters .btn{width:100%}.source-row,.guide-row,.auto-counts{grid-template-columns:1fr 1fr}.head-actions{width:100%}.head-actions .btn{flex:1}}
 </style>
 </head>
 <body>
 <div class="wrap">
-    <div class="card">
-        <nav class="breadcrumb" aria-label="Breadcrumb">
-            <a href="/zurie/">Dashboard</a><span>›</span>
-            <strong>Semakan Gambar</strong>
-        </nav>
-        <div class="top">
+    <section class="panel">
+        <nav class="breadcrumb" aria-label="Breadcrumb"><a href="/zurie/">Dashboard</a><span>›</span><strong>Foto Kad Matrik</strong></nav>
+        <div class="page-head">
             <div>
-                <h1 class="title">Semakan Gambar Pelajar</h1>
-                <div class="muted">Pilih kategori. Sistem akan memaparkan 50 gambar bagi setiap halaman.</div>
+                <h1 class="page-title">Semakan Foto Kad Matrik</h1>
+                <p class="subtitle">Kenal pasti gambar bermasalah, upload baharu dan kad yang belum lengkap.</p>
             </div>
-            <div class="top-actions">
-                <a class="btn ghost" href="/zurie/pages/upload_review.php">Semakan Upload</a>
-                <a class="btn ghost" href="/zurie/upload/" target="_blank">Borang Upload</a>
+            <div class="head-actions">
+                <form method="post" onsubmit="return confirm('Jalankan audit semua gambar pelajar aktif sekarang? Proses ini mungkin mengambil sedikit masa.');">
+                    <input type="hidden" name="csrf" value="<?= h($token) ?>">
+                    <button class="btn" type="submit" name="action" value="audit_all">Jalankan Audit Foto</button>
+                </form>
+                <a class="btn secondary" href="/zurie/upload/" target="_blank" rel="noopener">Borang Upload</a>
+                <a class="btn subtle" href="#adminSettings" onclick="document.getElementById('adminSettings').open=true">Tetapan</a>
             </div>
         </div>
-    </div>
+    </section>
 
     <?php foreach ($messages as $message): ?><div class="alert ok"><?= h($message) ?></div><?php endforeach; ?>
     <?php foreach ($errors as $error): ?><div class="alert err"><?= h($error) ?></div><?php endforeach; ?>
 
-    <details class="card admin-panel">
-        <summary>Semakan sumber pelajar aktif & tetapan</summary>
-        <div class="admin-body">
-            <div class="toolbar" style="margin-bottom:10px">
-                <a class="btn ghost" href="/zurie/pages/pg_live_lookup_setup.php">Tetapan Pelajar Aktif</a>
-                <a class="btn ghost" href="/zurie/pages/mis_sftp_setup.php">Tetapan SFTP</a>
-            </div>
-    <?php if (!empty($activeReconciliation['ready'])): ?>
-        <?php
-            $needsActiveSync = (int)($activeReconciliation['missing_local'] ?? 0) > 0
-                || (int)($activeReconciliation['stale_local'] ?? 0) > 0;
-            $hasDuplicateRecords = (int)($activeReconciliation['duplicate_records'] ?? 0) > 0;
-        ?>
-        <div class="card">
-            <div class="top">
-                <div>
-                    <strong>Semakan Sumber Pelajar Aktif</strong>
-                    <div class="small">
-                        PostgreSQL Semester <?= h((string)($activeReconciliation['semester'] ?? '-')) ?>,
-                        status <?= h((string)($activeReconciliation['active_status'] ?? '-')) ?>.
-                        Photo Audit hanya memaparkan pelajar yang masih aktif dalam roster ini.
-                    </div>
-                </div>
-                <form method="post" onsubmit="return confirm('Selaras semua pelajar aktif PostgreSQL ke table senarai Zurie dan tandakan rekod lama sebagai TIDAK_AKTIF? Rekod audit/upload tidak dipadam.');">
-                    <input type="hidden" name="csrf" value="<?= h($token) ?>">
-                    <button class="btn <?= $needsActiveSync ? 'warn' : 'ghost' ?>" type="submit" name="action" value="reconcile_active">
-                        Semak &amp; Selaras Pelajar Aktif
-                    </button>
-                </form>
-            </div>
-            <div class="source-grid">
-                <div class="source-stat"><span>Rekod Aktif PostgreSQL</span><b><?= number_format((int)($activeReconciliation['active_records'] ?? 0)) ?></b></div>
-                <div class="source-stat"><span>Pelajar Unik (No. KP)</span><b><?= number_format((int)($activeReconciliation['unique_kp'] ?? 0)) ?></b></div>
-                <div class="source-stat"><span>Roster Ada No. Matrik</span><b><?= number_format((int)($activeReconciliation['roster_count'] ?? 0)) ?></b></div>
-                <div class="source-stat"><span>Aktif Dalam Zurie</span><b><?= number_format((int)($activeReconciliation['matched'] ?? 0)) ?></b></div>
-                <div class="source-stat"><span>Belum Sync ke Zurie</span><b><?= number_format((int)($activeReconciliation['missing_local'] ?? 0)) ?></b></div>
-                <div class="source-stat"><span>Rekod Lama Masih AKTIF</span><b><?= number_format((int)($activeReconciliation['stale_local'] ?? 0)) ?></b></div>
-            </div>
-            <?php if ($hasDuplicateRecords): ?>
-                <div class="source-note">
-                    Perbezaan kiraan dikesan: <?= number_format((int)$activeReconciliation['active_records']) ?> ialah bilangan rekod pendaftaran,
-                    tetapi hanya <?= number_format((int)$activeReconciliation['unique_kp']) ?> pelajar unik.
-                    Terdapat <?= number_format((int)$activeReconciliation['duplicate_records']) ?> rekod aktif pendua berdasarkan No. KP.
-                </div>
-            <?php endif; ?>
-            <?php if ((int)($activeReconciliation['blank_kp_records'] ?? 0) > 0): ?>
-                <div class="source-note">
-                    <?= number_format((int)$activeReconciliation['blank_kp_records']) ?> rekod aktif PostgreSQL tidak mempunyai No. KP yang boleh digunakan untuk padanan unik.
-                </div>
-            <?php endif; ?>
-            <?php if ((int)($activeReconciliation['unmapped_students'] ?? 0) > 0): ?>
-                <div class="source-note">
-                    <?= number_format((int)$activeReconciliation['unmapped_students']) ?> pelajar aktif unik tidak dapat dipadankan kepada No. Matrik dalam table <code>personal</code>.
-                </div>
-            <?php endif; ?>
-            <?php if ($needsActiveSync): ?>
-                <div class="source-note">
-                    Senarai Zurie belum selaras: <?= number_format((int)$activeReconciliation['missing_local']) ?> pelajar aktif belum ada dalam Zurie dan
-                    <?= number_format((int)$activeReconciliation['stale_local']) ?> rekod lama termasuk pelajar berhenti masih ditanda AKTIF.
-                    Klik <b>Semak &amp; Selaras Pelajar Aktif</b> sebelum Audit Semua.
-                </div>
-            <?php else: ?>
-                <div class="source-note source-ok">Senarai aktif Zurie telah sepadan dengan roster aktif PostgreSQL. Pelajar berhenti tidak dimasukkan dalam filter intake.</div>
-            <?php endif; ?>
+    <section class="panel">
+        <div class="summary-grid">
+            <a class="summary-card missing <?= $filter === 'missing' ? 'active' : '' ?>" href="<?= h($tabUrls['missing']) ?>">
+                <span>Tiada Gambar</span><b><?= number_format(stat_int($stats, 'simple_missing')) ?></b><small>Gambar tidak ditemui dalam MIS</small>
+            </a>
+            <a class="summary-card review <?= in_array($filter, ['review_all','review','upload'], true) ? 'active' : '' ?>" href="<?= h($tabUrls['review_all']) ?>">
+                <span>Perlu Semakan</span><b><?= number_format(stat_int($stats, 'simple_review_total')) ?></b><small>Termasuk upload baharu dan isu gambar</small>
+            </a>
+            <a class="summary-card card-status <?= $filter === 'card' ? 'active' : '' ?>" href="<?= h($tabUrls['card']) ?>">
+                <span>Kad Belum Lengkap</span><b><?= number_format(stat_int($stats, 'simple_card')) ?></b><small>No. kad atau UID RFID belum direkod</small>
+            </a>
         </div>
-    <?php else: ?>
-        <div class="alert err">
-            PostgreSQL aktif tidak dapat disemak. Photo Audit menggunakan status tempatan Zurie sahaja.
-            <?= h((string)($activeReconciliation['error'] ?? $activeSnapshot['error'] ?? '')) ?>
-        </div>
-    <?php endif; ?>
-        </div>
-    </details>
+        <div class="progress-note">Pelajar aktif: <b><?= number_format(stat_int($stats, 'aktif')) ?></b> &nbsp;•&nbsp; Selesai: <b><?= number_format(stat_int($stats, 'simple_completed')) ?></b> &nbsp;•&nbsp; Perlu tindakan: <b><?= number_format(stat_int($stats, 'simple_attention')) ?></b></div>
+    </section>
 
-    <details class="card admin-panel">
-        <summary>Panduan kategori gambar</summary>
-        <div class="admin-body quality-guide">
-            <div class="guide"><b>✅ Diterima</b>Skor background 50% dan ke atas.</div>
-            <div class="guide"><b>⚠️ Semak Manual</b>Skor bawah 50%, tetapi belum jelas untuk ditolak.</div>
-            <div class="guide"><b>⛔ Ditolak</b>Hanya background yang sangat jelas biru, berwarna kuat, terlalu gelap atau bercorak.</div>
-            <div class="guide"><b>🛠 Repair</b>Crop dan pembaikan saiz sebelum semakan upload.</div>
-        </div>
-    </details>
-
-    <div class="card quick-stats">
-        <a class="quick-stat cat-pending <?= $filter==='bg_pending'?'active':'' ?>" href="<?= h($tabUrls['bg_pending']) ?>"><span>Belum Dinilai Auto</span><b id="statBgPending"><?= stat_int($stats,'bg_pending') ?></b></a>
-        <a class="quick-stat cat-ok <?= $filter==='bg_ok'?'active':'' ?>" href="<?= h($tabUrls['bg_ok']) ?>"><span>Diterima</span><b id="statBgAccepted"><?= stat_int($stats,'bg_ok') ?></b></a>
-        <a class="quick-stat cat-review <?= $filter==='bg_review'?'active':'' ?>" href="<?= h($tabUrls['bg_review']) ?>"><span>Semak Manual</span><b id="statBgReview"><?= stat_int($stats,'bg_review') ?></b></a>
-        <a class="quick-stat cat-reject <?= $filter==='bg_reject'?'active':'' ?>" href="<?= h($tabUrls['bg_reject']) ?>"><span>Ditolak</span><b id="statBgRejected"><?= stat_int($stats,'bg_reject') ?></b></a>
-        <a class="quick-stat cat-failed <?= $filter==='bg_failed'?'active':'' ?>" href="<?= h($tabUrls['bg_failed']) ?>"><span>Analisis Gagal</span><b id="statBgFailed"><?= stat_int($stats,'bg_failed') ?></b></a>
-        <a class="quick-stat cat-missing <?= $filter==='missing'?'active':'' ?>" href="<?= h($tabUrls['missing']) ?>"><span>Tiada Gambar</span><b><?= stat_int($stats,'tiada_mis') ?></b></a>
-    </div>
-
-    <div class="card auto-eval-card">
-        <div class="top">
-            <div class="auto-eval-title">
-                <div class="auto-eval-icon">⚡</div>
-                <div>
-                    <strong>Nilai Semua Gambar Secara Automatik</strong>
-                    <div class="small">Ambang longgar: skor 50% ke atas diterima, bawah 50% semak manual, dan hanya background yang sangat kontra ditolak.</div>
-                </div>
-            </div>
-            <div class="auto-eval-actions">
-                <button type="button" class="btn auto-start" id="autoBgStart" data-pending="<?= stat_int($stats,'bg_pending') ?>">Nilai Semua Auto</button>
-                <button type="button" class="btn ghost" id="autoBgRecheck">Nilai Semula Semua</button>
-                <button type="button" class="btn auto-stop" id="autoBgStop" hidden>Henti selepas batch ini</button>
-            </div>
-        </div>
-        <div class="auto-progress" id="autoBgProgress" hidden>
-            <div class="auto-progress-head">
-                <strong id="autoBgStatus">Menyediakan batch…</strong>
-                <span class="small" id="autoBgPercent">0%</span>
-            </div>
-            <div class="progress-track"><div class="progress-fill" id="autoBgFill"></div></div>
-            <div class="auto-counts">
-                <div class="auto-count pending"><span>Belum</span><b id="autoCountPending"><?= stat_int($stats,'bg_pending') ?></b></div>
-                <div class="auto-count accepted"><span>Diterima</span><b id="autoCountAccepted"><?= stat_int($stats,'bg_ok') ?></b></div>
-                <div class="auto-count review"><span>Semak Manual</span><b id="autoCountReview"><?= stat_int($stats,'bg_review') ?></b></div>
-                <div class="auto-count rejected"><span>Ditolak</span><b id="autoCountRejected"><?= stat_int($stats,'bg_reject') ?></b></div>
-                <div class="auto-count failed"><span>Gagal</span><b id="autoCountFailed"><?= stat_int($stats,'bg_failed') ?></b></div>
-            </div>
-            <div class="auto-log" id="autoBgLog">Jangan tutup tab ini sehingga proses selesai.</div>
-        </div>
-    </div>
-
-    <details class="card admin-panel">
-        <summary>Audit, ujian & reset data</summary>
-        <div class="admin-body">
-        <form method="post" class="toolbar" onsubmit="return confirm('Audit semua pelajar aktif akan mengambil sedikit masa. Teruskan?');">
-            <input type="hidden" name="csrf" value="<?= h($token) ?>">
-            <button class="btn" type="submit" name="action" value="audit_all">Audit Semua Gambar MIS</button>
-            <button class="btn warn" type="submit" name="action" value="audit_sample">Test 50 Pelajar</button>
-            <span class="small">Hanya roster aktif PostgreSQL semasa. Prioriti fail: .jpg → .jpeg → .png, kemudian huruf besar.</span>
-        </form>
-        <hr style="border:0;border-top:1px solid #e2e8f0;margin:13px 0">
-        <form method="post" class="toolbar" onsubmit="return confirm('Clear data audit untuk batch baru?');">
-            <input type="hidden" name="csrf" value="<?= h($token) ?>">
-            <button class="btn danger" type="submit" name="action" value="clear_audit">Clear Audit Batch</button>
-            <button class="btn danger" type="submit" name="action" value="clear_audit_uploads" onclick="return confirm('Ini akan clear audit DAN rekod upload. Fail fizikal tidak dipadam. Teruskan?');">Clear Audit + Rekod Upload</button>
-        </form>
-            </div>
-    </details>
-
-    <div class="card">
-        <form method="get" class="category-bar">
-            <?php foreach ($studentFilters as $filterName => $filterValue): ?>
-                <?php if ($filterValue !== ''): ?><input type="hidden" name="<?= h($filterName) ?>" value="<?= h($filterValue) ?>"><?php endif; ?>
-            <?php endforeach; ?>
-            <div class="filter-field">
-                <label for="categoryFilter">Kategori Semakan</label>
-                <select id="categoryFilter" name="filter" onchange="this.form.submit()">
-                    <optgroup label="Tindakan utama">
-                        <option value="bg_pending" <?= $filter==='bg_pending'?'selected':'' ?>>Belum Dinilai Auto</option>
-                        <option value="bg_ok" <?= $filter==='bg_ok'?'selected':'' ?>>Diterima - Putih / Hampir Putih</option>
-                        <option value="bg_review" <?= $filter==='bg_review'?'selected':'' ?>>Semak Manual - Kuning</option>
-                        <option value="bg_reject" <?= $filter==='bg_reject'?'selected':'' ?>>Ditolak - Merah</option>
-                        <option value="bg_failed" <?= $filter==='bg_failed'?'selected':'' ?>>Analisis Gagal - Kelabu</option>
-                        <option value="quality_pending" <?= $filter==='quality_pending'?'selected':'' ?>>Belum Nilai Manual</option>
-                        <option value="missing" <?= $filter==='missing'?'selected':'' ?>>Tiada Gambar</option>
-                        <option value="wa_pending" <?= $filter==='wa_pending'?'selected':'' ?>>Perlu WhatsApp</option>
-                    </optgroup>
-                    <optgroup label="Keputusan">
-                        <option value="good" <?= $filter==='good'?'selected':'' ?>>Gambar Baik</option>
-                        <option value="repair" <?= $filter==='repair'?'selected':'' ?>>Perlu Repair</option>
-                        <option value="upload_new" <?= $filter==='upload_new'?'selected':'' ?>>Perlu Upload Baru</option>
-                        <option value="wa_sent" <?= $filter==='wa_sent'?'selected':'' ?>>Sudah WhatsApp</option>
-                    </optgroup>
-                    <optgroup label="Lain-lain">
-                        <option value="unchecked" <?= $filter==='unchecked'?'selected':'' ?>>Belum Audit</option>
-                        <option value="exists" <?= $filter==='exists'?'selected':'' ?>>Semua Ada Gambar MIS</option>
-                        <option value="all" <?= $filter==='all'?'selected':'' ?>>Semua Rekod</option>
-                    </optgroup>
+    <section class="panel">
+        <form method="get" class="filters">
+            <div class="field">
+                <label for="statusFilter">Status</label>
+                <select id="statusFilter" name="filter">
+                    <option value="attention" <?= $filter === 'attention' ? 'selected' : '' ?>>Semua Perlu Tindakan</option>
+                    <option value="missing" <?= $filter === 'missing' ? 'selected' : '' ?>>Tiada Gambar</option>
+                    <option value="review_all" <?= $filter === 'review_all' ? 'selected' : '' ?>>Gambar Perlu Semakan</option>
+                    <option value="upload" <?= $filter === 'upload' ? 'selected' : '' ?>>Upload Baharu</option>
+                    <option value="card" <?= $filter === 'card' ? 'selected' : '' ?>>Kad Belum Lengkap</option>
+                    <option value="completed" <?= $filter === 'completed' ? 'selected' : '' ?>>Selesai</option>
+                    <option value="all" <?= $filter === 'all' ? 'selected' : '' ?>>Semua Pelajar</option>
                 </select>
             </div>
-            <div class="filter-field search-field">
-                <label for="filterQSimple">Carian</label>
-                <input id="filterQSimple" type="text" name="q" value="<?= h($search) ?>" placeholder="No. matrik atau nama pelajar">
+            <div class="field">
+                <label for="searchStudent">Carian</label>
+                <input id="searchStudent" type="text" name="q" value="<?= h($search) ?>" placeholder="Nama atau nombor matrik">
+            </div>
+            <div class="field">
+                <label for="praktikumFilter">Praktikum</label>
+                <select id="praktikumFilter" name="praktikum">
+                    <option value="">Semua</option>
+                    <?php foreach ($filterOptions['praktikum'] as $option): ?>
+                        <option value="<?= h($option) ?>" <?= $studentFilters['praktikum'] === $option ? 'selected' : '' ?>><?= h($option) ?></option>
+                    <?php endforeach; ?>
+                </select>
             </div>
             <button class="btn" type="submit">Cari</button>
-            <a class="btn ghost" href="?filter=quality_pending">Reset</a>
+            <a class="btn secondary" href="?filter=attention">Reset</a>
         </form>
+        <div class="result-line">Memaparkan <?= number_format($pageStart) ?>–<?= number_format($pageEnd) ?> daripada <?= number_format($filteredCount) ?> rekod.</div>
+    </section>
 
-        <details class="advanced-filter" <?= $hasAdvancedFilters ? 'open' : '' ?>>
-            <summary>Penapis lanjut: jantina, intake, praktikum, kuliah, jurusan dan asrama</summary>
-            <form method="get" class="filter-panel">
-                <input type="hidden" name="filter" value="<?= h($filter) ?>">
-                <input type="hidden" name="q" value="<?= h($search) ?>">
-
-                <div class="filter-field">
-                    <label for="filterJantina">Jantina</label>
-                    <select id="filterJantina" name="jantina">
-                        <option value="">Semua jantina</option>
-                        <?php foreach ($filterOptions['jantina'] as $value): ?>
-                            <option value="<?= h($value) ?>" <?= $studentFilters['jantina']===$value?'selected':'' ?>><?= h(audit_gender_label($value)) ?></option>
-                        <?php endforeach; ?>
-                    </select>
+    <details class="panel settings" id="adminSettings">
+        <summary>Tetapan dan alat pentadbir</summary>
+        <div class="settings-body">
+            <div class="settings-section">
+                <h3>Sumber pelajar aktif</h3>
+                <p>Roster PostgreSQL sesi semasa menjadi rujukan utama. Tetapan teknikal disimpan di sini supaya tidak mengganggu kerja harian.</p>
+                <div class="inline-actions">
+                    <a class="btn subtle" href="/zurie/pages/pg_live_lookup_setup.php">PostgreSQL</a>
+                    <a class="btn subtle" href="/zurie/pages/mis_sftp_setup.php">SFTP MIS</a>
+                    <a class="btn subtle" href="/zurie/pages/upload_review.php">Semakan Upload</a>
+                    <a class="btn subtle" href="/zurie/pages/photo_versions.php">Versi Gambar</a>
                 </div>
-                <div class="filter-field">
-                    <label for="filterIntake">Intake</label>
-                    <select id="filterIntake" name="intake">
-                        <option value="">Semua intake</option>
-                        <?php foreach ($filterOptions['intake'] as $value): ?>
-                            <option value="<?= h($value) ?>" <?= $studentFilters['intake']===$value?'selected':'' ?>>Intake <?= h($value) ?></option>
-                        <?php endforeach; ?>
-                    </select>
-                </div>
-                <div class="filter-field">
-                    <label for="filterPraktikum">Praktikum</label>
-                    <select id="filterPraktikum" name="praktikum">
-                        <option value="">Semua praktikum</option>
-                        <?php foreach ($filterOptions['praktikum'] as $value): ?>
-                            <option value="<?= h($value) ?>" <?= $studentFilters['praktikum']===$value?'selected':'' ?>><?= h($value) ?></option>
-                        <?php endforeach; ?>
-                    </select>
-                </div>
-                <div class="filter-field">
-                    <label for="filterKuliah">Kuliah</label>
-                    <select id="filterKuliah" name="kuliah">
-                        <option value="">Semua kuliah</option>
-                        <?php foreach ($filterOptions['kuliah'] as $value): ?>
-                            <option value="<?= h($value) ?>" <?= $studentFilters['kuliah']===$value?'selected':'' ?>><?= h($value) ?></option>
-                        <?php endforeach; ?>
-                    </select>
-                </div>
-                <div class="filter-field">
-                    <label for="filterJurusan">Jurusan</label>
-                    <select id="filterJurusan" name="jurusan">
-                        <option value="">Semua jurusan</option>
-                        <?php foreach ($filterOptions['jurusan'] as $value): ?>
-                            <option value="<?= h($value) ?>" <?= $studentFilters['jurusan']===$value?'selected':'' ?>><?= h($value) ?></option>
-                        <?php endforeach; ?>
-                    </select>
-                </div>
-                <div class="filter-field">
-                    <label for="filterAsrama">Asrama</label>
-                    <select id="filterAsrama" name="asrama">
-                        <option value="">Semua asrama</option>
-                        <?php foreach ($filterOptions['asrama'] as $value): ?>
-                            <option value="<?= h($value) ?>" <?= $studentFilters['asrama']===$value?'selected':'' ?>><?= h($value) ?></option>
-                        <?php endforeach; ?>
-                    </select>
-                </div>
-                <button class="btn" type="submit">Guna Penapis</button>
-                <a class="btn ghost" href="<?= h($resetAdvancedUrl) ?>">Kosongkan</a>
-            </form>
-        </details>
-
-        <div class="filter-result">
-            <span class="filter-count">Paparan <?= number_format($pageStart) ?>–<?= number_format($pageEnd) ?> daripada <?= number_format($filteredCount) ?> rekod</span>
-            <span class="filter-chip">50 rekod setiap halaman</span>
-            <?php if ($hasAdvancedFilters): ?><span class="filter-chip"><?= h($filterSummary) ?></span><?php endif; ?>
-            <?php if ($filter === 'missing'): ?><a class="btn pdf mini" href="<?= h($pdfDownloadUrl) ?>">PDF untuk HEP</a><?php endif; ?>
-        </div>
-        <div class="compact-note">Klik <b>Nilai Semua Auto</b> untuk proses semua gambar belum dinilai. Kad hijau, kuning, merah dan kelabu boleh diklik untuk membuka kategori masing-masing.</div>
-    </div>
-
-    <form method="post" id="bulkForm" action="?<?= h($currentQueryString) ?>">
-        <input type="hidden" name="csrf" value="<?= h($token) ?>">
-        <div class="card bulk toolbar">
-            <label><input type="checkbox" id="selectAll"> Pilih 50 pada halaman</label>
-            <button class="btn bg mini" type="submit" name="action" value="bulk_background_check" onclick="return confirmBulk('Analisis background untuk pilihan sahaja? Maksimum 20 sekali.')">Nilai Pilihan</button>
-            <button class="btn good mini" type="submit" name="action" value="bulk_good" onclick="return confirmBulk('Tanda Gambar Baik untuk rekod terpilih?')">Tanda Baik</button>
-            <button class="btn repair mini" type="submit" name="action" value="bulk_repair" onclick="return confirmBulk('Auto repair gambar MIS terpilih? Maksimum 20 sekali.')">Repair</button>
-            <button class="btn upload mini" type="submit" name="action" value="bulk_upload" onclick="return confirmBulk('Tanda perlu Upload Baru untuk rekod terpilih?')">Minta Upload Baru</button>
-            <span class="small">Background dan repair maksimum 20 gambar sekali; tindakan lain maksimum 50.</span>
-        </div>
-
-        <div class="card table-wrap">
-            <table>
-                <thead>
-                    <tr>
-                        <th>☐</th>
-                        <th>Gambar MIS</th>
-                        <th>Pelajar</th>
-                        <th>Kelas / Program</th>
-                        <th>Audit & Kualiti</th>
-                        <th>Upload / Sync</th>
-                        <th>Tindakan</th>
-                    </tr>
-                </thead>
-                <tbody>
-                <?php if (!$rows): ?>
-                    <tr><td colspan="7" class="muted">Tiada rekod untuk paparan ini.</td></tr>
+                <?php if (!empty($activeReconciliation['ready'])): ?>
+                    <div class="source-row">
+                        <div class="source-item"><span>Roster aktif</span><b><?= number_format((int)($activeReconciliation['roster_count'] ?? 0)) ?></b></div>
+                        <div class="source-item"><span>Aktif dalam Zurie</span><b><?= number_format((int)($activeReconciliation['matched'] ?? 0)) ?></b></div>
+                        <div class="source-item"><span>Belum diselaraskan</span><b><?= number_format((int)($activeReconciliation['missing_local'] ?? 0)) ?></b></div>
+                        <div class="source-item"><span>Rekod lama aktif</span><b><?= number_format((int)($activeReconciliation['stale_local'] ?? 0)) ?></b></div>
+                    </div>
+                    <form method="post" class="inline-actions" style="margin-top:10px" onsubmit="return confirm('Selaras roster aktif PostgreSQL dengan senarai Zurie? Rekod audit dan upload tidak dipadam.');">
+                        <input type="hidden" name="csrf" value="<?= h($token) ?>">
+                        <button class="btn secondary" type="submit" name="action" value="reconcile_active">Selaras Pelajar Aktif</button>
+                    </form>
+                <?php else: ?>
+                    <div class="alert err" style="margin-top:12px">PostgreSQL tidak tersedia. <?= h((string)($activeReconciliation['error'] ?? $activeSnapshot['error'] ?? '')) ?></div>
                 <?php endif; ?>
-                <?php foreach ($rows as $row):
-                    $matrik = (string)$row['matrik'];
-                    $checked = !empty($row['checked_at']);
-                    $exists = (int)($row['photo_exists'] ?? 0) === 1;
-                    $proxyUrl = '/zurie/student_photo.php?nomatrik=' . rawurlencode($matrik);
-                    $uploadStatus = strtolower((string)($row['upload_status'] ?? ''));
-                    $uploadClass = in_array($uploadStatus, ['baru','lulus','tolak'], true) ? $uploadStatus : 'wait';
-                    [$qualityLabel, $qualityClass] = quality_badge($row['quality_status'] !== null ? (string)$row['quality_status'] : null);
-                    $backgroundStatusRaw = trim((string)($row['background_status'] ?? ''));
-                    $backgroundBadge = zurie_photo_background_badge($backgroundStatusRaw !== '' ? $backgroundStatusRaw : null);
-                    $rowBackgroundClass = match (true) {
-                        in_array($backgroundStatusRaw, ['putih', 'hampir_putih'], true) => 'row-bg-ok',
-                        $backgroundStatusRaw === 'semak' => 'row-bg-review',
-                        $backgroundStatusRaw === 'tolak' => 'row-bg-reject',
-                        $backgroundStatusRaw === 'gagal' => 'row-bg-failed',
-                        default => 'row-bg-pending',
-                    };
-                    $waContext = audit_whatsapp_context($row);
-                    $needsWa = $waContext['needed'];
-                    $waType = $waContext['type'];
-                    $waNote = $waContext['note'];
-                    $waLabel = $waContext['label'];
-                    $waUrl = $waType === 'tolak' ? audit_reject_wa_url($row) : ($needsWa ? audit_wa_url($row) : '');
-                    $waSent = (int)($row['whatsapp_sent'] ?? 0) === 1;
-                ?>
-                    <tr class="<?= h($rowBackgroundClass) ?>">
-                        <td><?php if ($exists): ?><input class="rowCheck" type="checkbox" name="matriks[]" value="<?= h($matrik) ?>"><?php endif; ?></td>
+            </div>
+
+            <div class="settings-section">
+                <h3>Analisis gambar automatik</h3>
+                <p>Skor 50% dan ke atas diterima. Keputusan yang meragukan kekal dalam senarai Perlu Semakan.</p>
+                <div class="inline-actions">
+                    <button type="button" class="btn" id="autoBgStart" data-pending="<?= stat_int($stats, 'bg_pending') ?>">Nilai Gambar Belum Dinilai</button>
+                    <button type="button" class="btn secondary" id="autoBgRecheck">Nilai Semula Semua</button>
+                    <button type="button" class="btn secondary" id="autoBgStop" hidden>Henti selepas batch</button>
+                </div>
+                <div class="auto-progress" id="autoBgProgress" hidden>
+                    <div class="progress-head"><strong id="autoBgStatus">Menyediakan batch…</strong><span id="autoBgPercent">0%</span></div>
+                    <div class="progress-track"><div class="progress-fill" id="autoBgFill"></div></div>
+                    <div class="auto-counts">
+                        <div class="auto-count"><span>Belum</span><b id="autoCountPending"><?= stat_int($stats,'bg_pending') ?></b></div>
+                        <div class="auto-count"><span>Diterima</span><b id="autoCountAccepted"><?= stat_int($stats,'bg_ok') ?></b></div>
+                        <div class="auto-count"><span>Semak</span><b id="autoCountReview"><?= stat_int($stats,'bg_review') ?></b></div>
+                        <div class="auto-count"><span>Ditolak</span><b id="autoCountRejected"><?= stat_int($stats,'bg_reject') ?></b></div>
+                        <div class="auto-count"><span>Gagal</span><b id="autoCountFailed"><?= stat_int($stats,'bg_failed') ?></b></div>
+                    </div>
+                    <div class="small" id="autoBgLog" style="margin-top:8px">Jangan tutup tab sehingga proses selesai.</div>
+                </div>
+            </div>
+
+            <div class="settings-section">
+                <h3>Alat pentadbir</h3>
+                <p>Gunakan fungsi ini hanya apabila perlu membuat audit semula, ujian atau reset batch.</p>
+                <div class="inline-actions">
+                    <form method="post" onsubmit="return confirm('Uji audit untuk 50 pelajar aktif?');">
+                        <input type="hidden" name="csrf" value="<?= h($token) ?>">
+                        <button class="btn secondary" type="submit" name="action" value="audit_sample">Uji 50 Pelajar</button>
+                    </form>
+                    <a class="btn secondary" href="<?= h($pdfDownloadUrl) ?>">Laporan Tiada Gambar</a>
+                    <form method="post" onsubmit="return confirm('Kosongkan keputusan audit untuk batch baharu?');">
+                        <input type="hidden" name="csrf" value="<?= h($token) ?>">
+                        <button class="btn danger" type="submit" name="action" value="clear_audit">Reset Audit</button>
+                    </form>
+                </div>
+            </div>
+
+            <div class="settings-section">
+                <h3>Panduan ringkas</h3>
+                <div class="guide-row">
+                    <div class="guide-item"><b>Tiada Gambar</b><br>Hubungi pelajar dan minta upload gambar.</div>
+                    <div class="guide-item"><b>Perlu Semakan</b><br>Semak gambar, repair atau luluskan upload.</div>
+                    <div class="guide-item"><b>Kad Belum Lengkap</b><br>Semak No. Kad dan UID RFID dalam MIS.</div>
+                </div>
+            </div>
+        </div>
+    </details>
+
+    <form method="post">
+        <input type="hidden" name="csrf" value="<?= h($token) ?>">
+        <input type="hidden" name="matrik" id="singleMatrik" value="">
+        <section class="panel table-panel">
+            <div class="table-scroll">
+                <table>
+                    <thead><tr><th>Foto</th><th>Pelajar</th><th>Status</th><th>Sebab</th><th>Kad / RFID</th><th>Tindakan</th></tr></thead>
+                    <tbody>
+                    <?php if (!$rows): ?><tr><td colspan="6" class="muted">Tiada rekod untuk paparan ini.</td></tr><?php endif; ?>
+                    <?php foreach ($rows as $row):
+                        $matrik = (string)($row['matrik'] ?? '');
+                        $exists = (int)($row['photo_exists'] ?? 0) === 1;
+                        $proxyUrl = '/zurie/student_photo.php?nomatrik=' . rawurlencode($matrik);
+                        $workflow = audit_workflow_state($row);
+                        $workflowKey = (string)$workflow['key'];
+                        $uploadStatus = strtolower(trim((string)($row['upload_status'] ?? '')));
+                        $syncStatus = strtolower(trim((string)($row['sync_status'] ?? '')));
+                        $backgroundStatus = strtolower(trim((string)($row['background_status'] ?? '')));
+                        $waContext = audit_whatsapp_context($row);
+                        $waUrl = $waContext['type'] === 'tolak' ? audit_reject_wa_url($row) : ($waContext['needed'] ? audit_wa_url($row) : '');
+                        $waSent = (int)($row['whatsapp_sent'] ?? 0) === 1;
+                        $cardNo = trim((string)($row['cardno'] ?? ''));
+                        $rfidUid = trim((string)($row['em_cardno'] ?? ''));
+                    ?>
+                    <tr>
                         <td>
-                            <?php if ($exists): ?>
-                                <a href="<?= h($proxyUrl) ?>" target="_blank" title="Buka gambar besar">
-                                    <img class="thumb" src="<?= h($proxyUrl) ?>" alt="Gambar MIS <?= h($matrik) ?>" onerror="this.style.display='none';">
-                                </a>
-                            <?php else: ?>
-                                <span class="badge no">TIADA</span>
-                            <?php endif; ?>
+                            <?php if ($exists): ?><a href="<?= h($proxyUrl) ?>" target="_blank" rel="noopener"><img class="photo" src="<?= h($proxyUrl) ?>" alt="Foto <?= h($matrik) ?>" onerror="this.style.display='none'"></a>
+                            <?php else: ?><div class="photo-empty">Tiada foto</div><?php endif; ?>
                         </td>
                         <td>
-                            <b><?= h($matrik) ?></b><br>
-                            <?= h((string)$row['nama']) ?><br>
-                            <span class="small">No KP: <?= h((string)($row['nokp'] ?? '')) ?></span><br>
-                            <span class="small">Jantina: <?= h(audit_gender_label((string)($row['jantina'] ?? '-'))) ?></span>
+                            <span class="student-name"><?= h((string)($row['nama'] ?? '-')) ?></span>
+                            <span class="student-meta"><?= h($matrik) ?></span>
+                            <span class="student-meta"><?= h((string)($row['praktikum'] ?? '-')) ?> · <?= h((string)($row['jurusan'] ?? '-')) ?></span>
+                        </td>
+                        <td><span class="state <?= h((string)$workflow['class']) ?>"><?= h((string)$workflow['label']) ?></span></td>
+                        <td class="reason"><?= h((string)$workflow['reason']) ?></td>
+                        <td>
+                            <?php if ((int)($row['pg_active'] ?? 0) === 1): ?>
+                                <div class="card-lines">
+                                    <div class="card-line"><strong>No. Kad</strong><?php if ($cardNo !== ''): ?><span class="value-ok"><?= h($cardNo) ?></span><?php else: ?><span class="value-missing">Belum direkod</span><?php endif; ?></div>
+                                    <div class="card-line"><strong>RFID</strong><?php if ($rfidUid !== ''): ?><span class="value-ok"><?= h($rfidUid) ?></span><?php else: ?><span class="value-missing">Belum daftar</span><?php endif; ?></div>
+                                </div>
+                            <?php else: ?><span class="small">Data kad tidak tersedia</span><?php endif; ?>
                         </td>
                         <td>
-                            Intake: <b><?= h((string)($row['stud_intake'] ?? '-')) ?></b><br>
-                            Praktikum: <b><?= h((string)($row['praktikum'] ?? '-')) ?></b><br>
-                            Kuliah: <?= h((string)($row['kuliah'] ?? '-')) ?><br>
-                            Jurusan: <?= h((string)($row['jurusan'] ?? '-')) ?><br>
-                            Asrama: <?= h((string)($row['asrama'] ?? '-')) ?>
-                        </td>
-                        <td>
-                            <?php if (!$checked): ?>
-                                <span class="badge wait">BELUM AUDIT</span>
-                            <?php elseif ($exists): ?>
-                                <span class="badge yes">ADA MIS</span>
-                            <?php else: ?>
-                                <span class="badge no">TIADA MIS</span>
-                            <?php endif; ?>
-                            <br><span class="badge <?= h($qualityClass) ?>" style="margin-top:6px"><?= h($qualityLabel) ?></span>
-                            <?php if (!empty($row['quality_reason'])): ?><br><span class="small"><?= h((string)$row['quality_reason']) ?></span><?php endif; ?>
-                            <?php if (!empty($row['quality_checked_by'])): ?><br><span class="small">Oleh: <?= h((string)$row['quality_checked_by']) ?></span><?php endif; ?>
-                            <div class="bg-details">
-                                <span class="badge <?= h($backgroundBadge['class']) ?>"><?= h($backgroundBadge['label']) ?></span>
-                                <?php if (!empty($row['background_checked_at'])): ?>
-                                    <?php if (!empty($row['background_reason'])): ?><br><span class="small"><?= h((string)$row['background_reason']) ?></span><?php endif; ?>
-                                    <details class="score-more">
-                                        <summary>Lihat skor</summary>
-                                        <span class="small">Skor: <b><?= number_format((float)($row['background_score'] ?? 0), 1) ?>%</b>
-                                        · Putih: <?= number_format((float)($row['background_white_ratio'] ?? 0), 1) ?>%
-                                        · Seragam: <?= number_format((float)($row['background_uniformity'] ?? 0), 1) ?>%</span>
-                                        <span class="small"><span class="color-dot" style="background:<?= h((string)($row['background_dominant_hex'] ?? '#ffffff')) ?>"></span>
-                                        <?= h((string)($row['background_dominant_color'] ?? '-')) ?>
-                                        · Bayang: <?= number_format((float)($row['background_shadow_ratio'] ?? 0), 1) ?>%</span>
-                                    </details>
-                                <?php else: ?>
-                                    <br><span class="small">Belum dianalisis.</span>
+                            <div class="row-actions">
+                                <?php if ($workflowKey === 'missing'): ?>
+                                    <?php if ($waUrl !== ''): ?><a class="btn wa small" target="_blank" rel="noopener" href="<?= h($waUrl) ?>" onclick='markWaSent(<?= json_encode($matrik, JSON_HEX_APOS|JSON_HEX_QUOT) ?>, <?= json_encode((string)$waContext['type'], JSON_HEX_APOS|JSON_HEX_QUOT) ?>, <?= json_encode((string)$waContext['note'], JSON_HEX_APOS|JSON_HEX_QUOT) ?>)'>Hubungi Pelajar</a>
+                                    <?php else: ?><a class="btn secondary small" href="/zurie/upload/" target="_blank" rel="noopener">Borang Upload</a><?php endif; ?>
+                                <?php elseif ($workflowKey === 'upload' || ($uploadStatus !== '' && ($syncStatus === 'gagal' || ($uploadStatus === 'lulus' && $syncStatus !== 'berjaya')))): ?>
+                                    <a class="btn small" href="/zurie/pages/upload_review.php?q=<?= rawurlencode($matrik) ?>">Semak Upload</a>
+                                <?php elseif ($workflowKey === 'review' && $exists && in_array($backgroundStatus, ['', 'gagal'], true)): ?>
+                                    <button class="btn small" type="submit" name="action" value="background_check" formaction="?<?= h($currentQueryString) ?>" onclick="this.form.querySelector('#singleMatrik').value='<?= h($matrik) ?>'">Analisis Foto</button>
+                                <?php elseif ($workflowKey === 'card'): ?>
+                                    <details class="row-details"><summary>Semak Kad</summary><div class="details-box">Maklumat kad perlu dikemas kini melalui modul kad/RFID dalam MIS.</div></details>
+                                <?php elseif ($exists): ?>
+                                    <a class="btn secondary small" href="<?= h($proxyUrl) ?>" target="_blank" rel="noopener">Lihat Foto</a>
                                 <?php endif; ?>
-                            </div>
-                        </td>
-                        <td>
-                            <?php if ($uploadStatus !== ''): ?>
-                                <span class="badge <?= h($uploadClass) ?>"><?= h(strtoupper($uploadStatus)) ?></span><br>
-                                <span class="small">Repair: <?= h((string)($row['repair_status'] ?? '-')) ?></span><br>
-                                <span class="small">Sync: <?= h(strtoupper((string)($row['sync_status'] ?? 'belum'))) ?></span><br>
-                                <?php if ($uploadStatus === 'tolak' && !empty($row['reject_reason'])): ?><span class="small">Sebab: <?= h((string)$row['reject_reason']) ?></span><br><?php endif; ?>
-                                <?php if ($uploadStatus === 'tolak' && !empty($row['reject_note'])): ?><span class="small">Catatan: <?= h((string)$row['reject_note']) ?></span><br><?php endif; ?>
-                                <a class="small" href="/zurie/pages/upload_review.php?q=<?= rawurlencode($matrik) ?>">Buka semakan</a>
-                            <?php else: ?>
-                                <span class="badge wait">BELUM UPLOAD</span>
-                            <?php endif; ?>
-                        </td>
-                        <td>
-                            <?php if ($exists): ?>
-                                <div class="action-row">
-                                    <button class="btn bg mini" type="submit" name="action" value="background_check" formaction="?<?= h($currentQueryString) ?>" onclick="if(!confirm('Analisis background <?= h($matrik) ?>? Jika belum dinilai, keputusan yang jelas akan ditanda Baik atau Upload Baru secara automatik.'))return false;this.form.querySelector('#singleMatrik').value='<?= h($matrik) ?>'">Semak BG</button>
+
+                                <details class="row-details">
+                                    <summary>Butiran</summary>
+                                    <div class="details-box">
+                                        Audit: <?= h((string)($row['checked_at'] ?? 'Belum')) ?><br>
+                                        Kualiti: <?= h((string)($row['quality_status'] ?? 'Belum dinilai')) ?><br>
+                                        Latar: <?= h((string)($row['background_status'] ?? 'Belum dinilai')) ?>
+                                        <?php if ($row['background_score'] !== null): ?><br>Skor: <?= number_format((float)$row['background_score'], 1) ?>%<?php endif; ?>
+                                        <?php if ($uploadStatus !== ''): ?><br>Upload: <?= h(strtoupper($uploadStatus)) ?> · Sync: <?= h(strtoupper($syncStatus !== '' ? $syncStatus : 'BELUM')) ?><?php endif; ?>
+                                    </div>
+                                </details>
+
+                                <?php if ($exists): ?>
                                     <details class="row-more">
-                                        <summary>Tindakan lain</summary>
-                                        <div class="row-menu">
-                                            <button class="btn good mini" type="submit" name="action" value="quality_good" formaction="?<?= h($currentQueryString) ?>" onclick="this.form.querySelector('#singleMatrik').value='<?= h($matrik) ?>'">Baik</button>
-                                            <button class="btn repair mini" type="submit" name="action" value="quality_repair" formaction="?<?= h($currentQueryString) ?>" onclick="if(!confirm('Ambil gambar MIS dan auto repair <?= h($matrik) ?>?'))return false;this.form.querySelector('#singleMatrik').value='<?= h($matrik) ?>'">Repair</button>
-                                            <button class="btn upload mini" type="submit" name="action" value="quality_upload" formaction="?<?= h($currentQueryString) ?>" onclick="this.form.querySelector('#singleMatrik').value='<?= h($matrik) ?>'">Upload Baru</button>
-                                            <?php if (!empty($row['quality_status'])): ?>
-                                                <button class="btn reset mini" type="submit" name="action" value="quality_reset" onclick="this.form.querySelector('#singleMatrik').value='<?= h($matrik) ?>'">Reset</button>
-                                            <?php endif; ?>
+                                        <summary>Tindakan</summary>
+                                        <div class="more-box">
+                                            <button class="btn secondary small" type="submit" name="action" value="background_check" formaction="?<?= h($currentQueryString) ?>" onclick="this.form.querySelector('#singleMatrik').value='<?= h($matrik) ?>'">Semak BG</button>
+                                            <button class="btn good small" type="submit" name="action" value="quality_good" formaction="?<?= h($currentQueryString) ?>" onclick="this.form.querySelector('#singleMatrik').value='<?= h($matrik) ?>'">Baik</button>
+                                            <button class="btn repair small" type="submit" name="action" value="quality_repair" formaction="?<?= h($currentQueryString) ?>" onclick="if(!confirm('Auto repair gambar <?= h($matrik) ?>?'))return false;this.form.querySelector('#singleMatrik').value='<?= h($matrik) ?>'">Repair</button>
+                                            <button class="btn upload small" type="submit" name="action" value="quality_upload" formaction="?<?= h($currentQueryString) ?>" onclick="this.form.querySelector('#singleMatrik').value='<?= h($matrik) ?>'">Minta Upload</button>
+                                            <?php if (!empty($row['quality_status'])): ?><button class="btn secondary small" type="submit" name="action" value="quality_reset" formaction="?<?= h($currentQueryString) ?>" onclick="this.form.querySelector('#singleMatrik').value='<?= h($matrik) ?>'">Reset</button><?php endif; ?>
                                         </div>
                                     </details>
-                                </div>
-                            <?php endif; ?>
-
-                            <?php if ($needsWa): ?>
-                                <?php if ($waUrl !== ''): ?>
-                                    <a class="btn wa" target="_blank" rel="noopener" href="<?= h($waUrl) ?>"
-                                       onclick='markWaSent(<?= json_encode($matrik, JSON_HEX_APOS|JSON_HEX_QUOT) ?>, <?= json_encode($waType, JSON_HEX_APOS|JSON_HEX_QUOT) ?>, <?= json_encode($waNote, JSON_HEX_APOS|JSON_HEX_QUOT) ?>)'><?= h($waLabel) ?></a>
-                                    <div class="wa-line">
-                                        <span id="waBox_<?= h($matrik) ?>" class="wa-box <?= $waSent?'sent':'' ?>"><?= $waSent?'✓':'' ?></span>
-                                        <button type="button" id="waCancel_<?= h($matrik) ?>" class="wa-cancel" style="<?= $waSent?'':'display:none' ?>" onclick="unmarkWaSent('<?= h($matrik) ?>')">×</button>
-                                        <span id="waText_<?= h($matrik) ?>" class="wa-time"><?= $waSent ? ('WA ' . h((string)($row['whatsapp_type'] ?? $waType)) . ': ' . h((string)($row['whatsapp_sent_at'] ?? '-'))) : 'Belum WA' ?></span>
-                                    </div>
-                                    <span class="small">No HP: <?= h((string)($row['nohp'] ?? '')) ?></span>
-                                    <?php if (!empty($row['whatsapp_source'])): ?><br><span class="small">Sumber WA: <?= h((string)$row['whatsapp_source']) ?></span><?php endif; ?>
-                                <?php else: ?>
-                                    <span class="badge no">TIADA NO HP</span>
                                 <?php endif; ?>
+                            </div>
+                            <?php if ($waContext['needed']): ?>
+                                <div class="wa-line">
+                                    <span id="waBox_<?= h($matrik) ?>" class="wa-box <?= $waSent ? 'sent' : '' ?>"><?= $waSent ? '✓' : '' ?></span>
+                                    <button type="button" id="waCancel_<?= h($matrik) ?>" class="wa-cancel" style="<?= $waSent ? '' : 'display:none' ?>" onclick="unmarkWaSent('<?= h($matrik) ?>')">×</button>
+                                    <span id="waText_<?= h($matrik) ?>" class="wa-time"><?= $waSent ? 'WhatsApp direkod' : 'Belum WhatsApp' ?></span>
+                                </div>
                             <?php endif; ?>
                         </td>
                     </tr>
-                <?php endforeach; ?>
-                </tbody>
-            </table>
-        </div>
-
-        <?php if ($totalPages > 1): ?>
-            <div class="card pagination-wrap">
-                <div class="small">Halaman <?= number_format($page) ?> daripada <?= number_format($totalPages) ?></div>
-                <nav class="pagination" aria-label="Navigasi halaman">
-                    <a class="page-link <?= $page <= 1 ? 'disabled' : '' ?>" href="<?= h($paginationUrl(max(1, $page - 1))) ?>">‹</a>
-                    <?php if ($paginationStart > 1): ?>
-                        <a class="page-link" href="<?= h($paginationUrl(1)) ?>">1</a>
-                        <?php if ($paginationStart > 2): ?><span class="small">…</span><?php endif; ?>
-                    <?php endif; ?>
-                    <?php for ($pageNo = $paginationStart; $pageNo <= $paginationEnd; $pageNo++): ?>
-                        <a class="page-link <?= $pageNo === $page ? 'active' : '' ?>" href="<?= h($paginationUrl($pageNo)) ?>"><?= $pageNo ?></a>
-                    <?php endfor; ?>
-                    <?php if ($paginationEnd < $totalPages): ?>
-                        <?php if ($paginationEnd < $totalPages - 1): ?><span class="small">…</span><?php endif; ?>
-                        <a class="page-link" href="<?= h($paginationUrl($totalPages)) ?>"><?= $totalPages ?></a>
-                    <?php endif; ?>
-                    <a class="page-link <?= $page >= $totalPages ? 'disabled' : '' ?>" href="<?= h($paginationUrl(min($totalPages, $page + 1))) ?>">›</a>
-                </nav>
-            </div>
-        <?php endif; ?>
-        <input type="hidden" name="matrik" id="singleMatrik" value="">
-    </form>
-
-    <section class="card" id="semakan-kad-matrik">
-        <div class="top">
-            <div>
-                <h2 class="title" style="font-size:20px;margin-bottom:4px">Semakan Kad Matrik</h2>
-                <div class="muted">Pelajar aktif sesi semasa yang UID RFID belum direkodkan. Senarai ini membantu mengesan gambar atau kad yang masih perlukan tindakan.</div>
-            </div>
-            <span class="badge no"><?= number_format($kadSemakanCount) ?> belum daftar RFID</span>
-        </div>
-
-        <?php if ($kadSemakanCount < 1): ?>
-            <div class="alert ok" style="margin-top:14px">Semua pelajar aktif mempunyai UID RFID.</div>
-        <?php else: ?>
-            <div class="compact-note">Memaparkan maksimum 50 rekod. No. Kad ialah <code>personal.cardno</code>; UID RFID ialah <code>personal.em_cardno</code>.</div>
-            <div class="table-wrap" style="margin-top:12px">
-                <table>
-                    <thead>
-                    <tr>
-                        <th>Nama</th>
-                        <th>No. Matrik</th>
-                        <th>No. Kad</th>
-                        <th>Status</th>
-                        <th>Sebab / Tindakan</th>
-                    </tr>
-                    </thead>
-                    <tbody>
-                    <?php foreach ($kadSemakanDisplay as $kadRow): ?>
-                        <?php
-                            $kadStatus = (string)($kadRow['kad_issue_status'] ?? 'RFID Belum Daftar');
-                            $kadBadge = $kadStatus === 'Tiada Gambar' ? 'no' : ($kadStatus === 'Gambar Bermasalah' ? 'warn' : '');
-                            $kadMatrik = clean_matrik_audit((string)($kadRow['matrik'] ?? ''));
-                        ?>
-                        <tr>
-                            <td><strong><?= h((string)($kadRow['nama'] ?? '-')) ?></strong></td>
-                            <td><?= h($kadMatrik) ?></td>
-                            <td><?= trim((string)($kadRow['no_cetakan_kad'] ?? '')) !== '' ? h((string)$kadRow['no_cetakan_kad']) : '<span class="small">—</span>' ?></td>
-                            <td><span class="badge <?= h($kadBadge) ?>"><?= h($kadStatus) ?></span></td>
-                            <td>
-                                <?= h((string)($kadRow['kad_issue_reason'] ?? 'Semakan diperlukan.')) ?>
-                                <div style="margin-top:6px"><a class="btn ghost" href="?search=<?= rawurlencode($kadMatrik) ?>#bulkForm">Semak Gambar</a></div>
-                            </td>
-                        </tr>
                     <?php endforeach; ?>
                     </tbody>
                 </table>
             </div>
-        <?php endif; ?>
-    </section>
+            <?php if ($totalPages > 1): ?>
+                <div class="pagination-wrap">
+                    <div class="small">Halaman <?= number_format($page) ?> daripada <?= number_format($totalPages) ?></div>
+                    <nav class="pagination" aria-label="Navigasi halaman">
+                        <a class="page-link <?= $page <= 1 ? 'disabled' : '' ?>" href="<?= h($paginationUrl(max(1, $page - 1))) ?>">‹</a>
+                        <?php if ($paginationStart > 1): ?><a class="page-link" href="<?= h($paginationUrl(1)) ?>">1</a><?php if ($paginationStart > 2): ?><span class="small">…</span><?php endif; ?><?php endif; ?>
+                        <?php for ($pageNo = $paginationStart; $pageNo <= $paginationEnd; $pageNo++): ?><a class="page-link <?= $pageNo === $page ? 'active' : '' ?>" href="<?= h($paginationUrl($pageNo)) ?>"><?= $pageNo ?></a><?php endfor; ?>
+                        <?php if ($paginationEnd < $totalPages): ?><?php if ($paginationEnd < $totalPages - 1): ?><span class="small">…</span><?php endif; ?><a class="page-link" href="<?= h($paginationUrl($totalPages)) ?>"><?= $totalPages ?></a><?php endif; ?>
+                        <a class="page-link <?= $page >= $totalPages ? 'disabled' : '' ?>" href="<?= h($paginationUrl(min($totalPages, $page + 1))) ?>">›</a>
+                    </nav>
+                </div>
+            <?php endif; ?>
+        </section>
+    </form>
 </div>
 
 <script>
@@ -2809,7 +2695,7 @@ async function startAutoBackground(skipConfirm = false) {
         if (log) log.textContent = error.message || String(error);
     } finally {
         autoBgRunning = false;
-        if (startButton) { startButton.disabled = false; startButton.textContent = 'Nilai Semua Auto'; startButton.dataset.pending = document.getElementById('autoCountPending')?.textContent.replace(/\D/g, '') || '0'; }
+        if (startButton) { startButton.disabled = false; startButton.textContent = 'Nilai Gambar Belum Dinilai'; startButton.dataset.pending = document.getElementById('autoCountPending')?.textContent.replace(/\D/g, '') || '0'; }
         if (stopButton) stopButton.hidden = true;
     }
 }

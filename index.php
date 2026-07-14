@@ -39,7 +39,7 @@ $displayRole = $isGuest ? 'Guest | Read-only Monitoring' : 'ICT | KMP';
     <title>Personal NOC Dashboard</title>
     <link rel="icon" href="/zurie/image/zuriex.jpg">
     <link rel="stylesheet" href="assets/css/style.css">
-    <link rel="stylesheet" href="assets/css/noc-dashboard.css?v=20260714-menu1">
+    <link rel="stylesheet" href="assets/css/noc-dashboard.css">
     <link rel="stylesheet" href="assets/css/live-ping.css?v=20260622-compactdetail1">
     <link rel="stylesheet" href="assets/css/dashboard-server-detail.css?v=20260623-mispinned1">
     <link rel="stylesheet" href="assets/css/dashboard-polish.css?v=20260624-overviewfull1">
@@ -330,13 +330,10 @@ $displayRole = $isGuest ? 'Guest | Read-only Monitoring' : 'ICT | KMP';
 
             <?php if (!$isGuest): ?>
             <div class="menu-group" data-menu-group="upload-centre">
-                <button class="menu-title" type="button"><span><i class="nav-icon">▤</i><span class="nav-label">Foto Pelajar</span></span><span id="photoMenuBadge" class="photo-menu-badge" hidden>0</span></button>
+                <button class="menu-title" type="button"><span><i class="nav-icon">▤</i><span class="nav-label">Foto Kad Matrik</span></span><span id="photoMenuBadge" class="photo-menu-badge" hidden>0</span></button>
                 <div class="submenu-wrap">
+                    <a class="submenu-link" id="photoReviewLink" href="/zurie/pages/photo_audit.php" title="Semak foto, upload baharu dan status kad pelajar">Semakan Foto Kad Matrik</a>
                     <a class="submenu-link" href="/zurie/upload/" target="_blank" rel="noopener noreferrer" title="Borang awam untuk pelajar sahkan identiti dan muat naik foto">Borang Upload Pelajar</a>
-                    <a class="submenu-link" href="/zurie/pages/photo_audit.php" title="Semak kewujudan dan kualiti gambar MIS, tandakan repair atau hantar WhatsApp">Audit Gambar MIS</a>
-                    <a class="submenu-link" id="photoReviewLink" href="/zurie/pages/upload_review.php" title="Semak gambar asal dan repaired, lulus, tolak atau sync ke MIS">Semakan, Repair &amp; Sync</a>
-                    <a class="submenu-link" href="/zurie/pages/mis_sftp_setup.php" title="Uji konfigurasi dan sambungan SFTP dari NOC ke MIS">Tetapan SFTP MIS</a>
-                    <a class="submenu-link" href="/zurie/pages/pg_live_lookup_setup.php" title="Uji semakan langsung PostgreSQL untuk pelajar yang belum masuk MySQL senarai">Semakan PostgreSQL Live</a>
                 </div>
             </div>
 
