@@ -108,6 +108,31 @@ function pv_refresh_live_manifest_quiet(array $config): array
     return $scan;
 }
 
+/**
+ * Tentukan kegagalan arkib yang selamat untuk diteruskan.
+ *
+ * Kes ini berlaku apabila manifest lama masih melaporkan fail mempunyai saiz,
+ * tetapi fail sebenar di SFTP sudah kosong atau sudah tiada. Tiada kandungan
+ * berguna boleh diarkib, jadi gambar standard baharu dibenarkan menggantikannya.
+ */
+function pv_archive_failure_is_nonblocking(string $message): bool
+{
+    $message = strtolower(trim($message));
+    foreach ([
+        'fail remote kosong',
+        'muat turun tidak menghasilkan fail tempatan',
+        'arkib gagal: fail kosong',
+        'sudah tiada dalam sftp',
+        'no such file',
+        'no such file or directory',
+    ] as $marker) {
+        if ($marker !== '' && str_contains($message, $marker)) {
+            return true;
+        }
+    }
+    return false;
+}
+
 function pv_archive_root(): string
 {
     return dirname(__DIR__) . '/archive/sftp_photos';
@@ -693,21 +718,45 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
                 } else {
                     $oldStandardArchive = pv_archive_remote_file($standardFile, $matrik, $config);
                     if (empty($oldStandardArchive['ok'])) {
-                        @unlink($jpgTemp);
-                        throw new RuntimeException('Gambar standard lama tidak diganti kerana proses arkib gagal: ' . (string)($oldStandardArchive['message'] ?? ''));
+                        $archiveMessage = (string)($oldStandardArchive['message'] ?? 'Arkib gagal.');
+
+                        if (!pv_archive_failure_is_nonblocking($archiveMessage)) {
+                            @unlink($jpgTemp);
+                            throw new RuntimeException(
+                                'Gambar standard lama tidak diganti kerana proses arkib gagal: ' . $archiveMessage
+                            );
+                        }
+
+                        // Manifest boleh mempunyai saiz lama sedangkan fail remote sebenar
+                        // kosong atau telah hilang. Dalam keadaan ini tiada kandungan yang
+                        // boleh diselamatkan, jadi teruskan overwrite dengan JPG baharu yang
+                        // telah pun disahkan sah pada $jpgTemp.
+                        pv_append_archive_log([
+                            'timestamp' => date('Y-m-d H:i:s'),
+                            'operation' => 'replace_without_archive_empty_or_missing',
+                            'matrik' => $matrik,
+                            'remote_file' => $standardFile,
+                            'archive_file' => '',
+                            'bytes' => 0,
+                            'sha256' => '',
+                            'deleted' => false,
+                            'delete_message' => 'Arkib tidak dapat dibuat kerana fail standard lama kosong/tiada. Penggantian diteruskan. ' . $archiveMessage,
+                            'actor' => pv_actor(),
+                        ]);
+                    } else {
+                        pv_append_archive_log([
+                            'timestamp' => date('Y-m-d H:i:s'),
+                            'operation' => 'archive_before_replace',
+                            'matrik' => $matrik,
+                            'remote_file' => $standardFile,
+                            'archive_file' => (string)($oldStandardArchive['archive_file'] ?? ''),
+                            'bytes' => (int)($oldStandardArchive['bytes'] ?? 0),
+                            'sha256' => (string)($oldStandardArchive['sha256'] ?? ''),
+                            'deleted' => false,
+                            'delete_message' => 'Fail standard lama diarkib sebelum diganti.',
+                            'actor' => pv_actor(),
+                        ]);
                     }
-                    pv_append_archive_log([
-                        'timestamp' => date('Y-m-d H:i:s'),
-                        'operation' => 'archive_before_replace',
-                        'matrik' => $matrik,
-                        'remote_file' => $standardFile,
-                        'archive_file' => (string)($oldStandardArchive['archive_file'] ?? ''),
-                        'bytes' => (int)($oldStandardArchive['bytes'] ?? 0),
-                        'sha256' => (string)($oldStandardArchive['sha256'] ?? ''),
-                        'deleted' => false,
-                        'delete_message' => 'Fail standard lama diarkib sebelum diganti.',
-                        'actor' => pv_actor(),
-                    ]);
                 }
             }
 
