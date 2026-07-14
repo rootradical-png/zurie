@@ -39,7 +39,7 @@ $displayRole = $isGuest ? 'Guest | Read-only Monitoring' : 'ICT | KMP';
     <title>Personal NOC Dashboard</title>
     <link rel="icon" href="/zurie/image/zuriex.jpg">
     <link rel="stylesheet" href="assets/css/style.css">
-    <link rel="stylesheet" href="assets/css/noc-dashboard.css">
+    <link rel="stylesheet" href="assets/css/noc-dashboard.css?v=20260714-menu1">
     <link rel="stylesheet" href="assets/css/live-ping.css?v=20260622-compactdetail1">
     <link rel="stylesheet" href="assets/css/dashboard-server-detail.css?v=20260623-mispinned1">
     <link rel="stylesheet" href="assets/css/dashboard-polish.css?v=20260624-overviewfull1">

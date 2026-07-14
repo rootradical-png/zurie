@@ -39,7 +39,7 @@
 .noc-menu .menu-group.open .menu-title::after{transform:rotate(0deg)!important}
 .noc-menu .menu-group.open .menu-title{background:rgba(255,255,255,.04)!important}
 .noc-menu .submenu-wrap{max-height:0;opacity:0;overflow:hidden;transition:max-height .23s ease,opacity .18s ease,padding .18s ease;padding:0 5px}
-.noc-menu .menu-group.open .submenu-wrap{max-height:310px;opacity:1;padding:3px 5px 5px}
+.noc-menu .menu-group.open .submenu-wrap{max-height:900px;opacity:1;padding:3px 5px 5px}
 .noc-menu .submenu-link{display:block!important;min-height:0!important;padding:7px 9px 7px 40px!important;margin:1px 0!important;border:0!important;border-radius:7px!important;background:transparent!important;color:#92a9bf!important;font-size:10.8px!important;font-weight:700!important;transform:none!important}
 .noc-menu .submenu-link:hover{background:rgba(40,126,209,.1)!important;color:#ddecfb!important}
 .sidebar-collapse-btn{margin-top:auto;height:42px;border:0;border-top:1px solid rgba(112,157,195,.13);background:transparent;color:#a7bbcf;display:flex;align-items:center;gap:12px;padding:0 17px;font-size:12px;cursor:pointer}
