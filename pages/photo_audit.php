@@ -371,6 +371,8 @@ SELECT DISTINCT ON (UPPER(TRIM(COALESCE(personal.nomatrik, ''))))
         '[^0-9]', '', 'g'
     ) AS nohp,
     TRIM(COALESCE(personal.jantina, '')) AS jantina,
+    TRIM(COALESCE(personal.cardno, '')) AS no_cetakan_kad,
+    TRIM(COALESCE(personal.em_cardno, '')) AS uid_rfid,
     CASE
         WHEN b.blok_nama IS NOT NULL THEN
             CONCAT(
@@ -494,7 +496,7 @@ function audit_attach_pg_active(array $rows): array
 
     $byMatrik = is_array($snapshot['by_matrik'] ?? null) ? $snapshot['by_matrik'] : [];
     $currentFields = [
-        'nama', 'nokp', 'nohp', 'jantina', 'asrama', 'kuliah', 'praktikum',
+        'nama', 'nokp', 'nohp', 'jantina', 'no_cetakan_kad', 'uid_rfid', 'asrama', 'kuliah', 'praktikum',
         'tutoran', 'english', 'kokurikulum', 'jurusan',
         'stud_intake', 'stud_semester', 'stud_status',
     ];
@@ -2002,6 +2004,44 @@ try {
     $filterOptions['intake'] = array_values(array_unique($filterOptions['intake']));
     $stats = audit_compute_stats($allActiveRows);
 
+    // Ringkasan mudah untuk mengesan kad yang berkemungkinan belum selesai.
+    // UID RFID rasmi disimpan di PostgreSQL personal.em_cardno.
+    $kadSemakanRows = [];
+    foreach ($allActiveRows as $kadRow) {
+        $uidRfid = trim((string)($kadRow['uid_rfid'] ?? ''));
+        if ($uidRfid !== '') {
+            continue;
+        }
+
+        $photoExists = (int)($kadRow['photo_exists'] ?? 0) === 1;
+        $qualityStatus = strtolower(trim((string)($kadRow['quality_status'] ?? '')));
+        $backgroundStatus = strtolower(trim((string)($kadRow['background_status'] ?? '')));
+
+        if (!$photoExists) {
+            $kadRow['kad_issue_status'] = 'Tiada Gambar';
+            $kadRow['kad_issue_reason'] = 'Gambar belum dimuat naik atau belum dijumpai dalam MIS.';
+        } elseif (in_array($qualityStatus, ['upload_baru', 'tolak', 'reject', 'rejected'], true)
+            || in_array($backgroundStatus, ['reject', 'rejected', 'failed', 'manual', 'review'], true)) {
+            $kadRow['kad_issue_status'] = 'Gambar Bermasalah';
+            $kadRow['kad_issue_reason'] = trim((string)($kadRow['background_reason'] ?? $kadRow['quality_reason'] ?? ''))
+                ?: 'Gambar perlu disemak sebelum cetakan kad.';
+        } else {
+            $kadRow['kad_issue_status'] = 'RFID Belum Daftar';
+            $kadRow['kad_issue_reason'] = 'Gambar tersedia tetapi UID RFID belum direkodkan.';
+        }
+        $kadSemakanRows[] = $kadRow;
+    }
+    usort($kadSemakanRows, static function (array $a, array $b): int {
+        $priority = ['Tiada Gambar' => 1, 'Gambar Bermasalah' => 2, 'RFID Belum Daftar' => 3];
+        $pa = $priority[(string)($a['kad_issue_status'] ?? '')] ?? 9;
+        $pb = $priority[(string)($b['kad_issue_status'] ?? '')] ?? 9;
+        return $pa === $pb
+            ? strcasecmp((string)($a['nama'] ?? ''), (string)($b['nama'] ?? ''))
+            : ($pa <=> $pb);
+    });
+    $kadSemakanCount = count($kadSemakanRows);
+    $kadSemakanDisplay = array_slice($kadSemakanRows, 0, 50);
+
     $tabRows = array_values(array_filter($allActiveRows, static function (array $row) use ($filter): bool {
         $checked = trim((string)($row['checked_at'] ?? '')) !== '';
         $exists = (int)($row['photo_exists'] ?? 0) === 1;
@@ -2570,6 +2610,54 @@ body{font-family:Arial,sans-serif;background:#f4f7fb;margin:0;color:#0f172a}.wra
         <?php endif; ?>
         <input type="hidden" name="matrik" id="singleMatrik" value="">
     </form>
+
+    <section class="card" id="semakan-kad-matrik">
+        <div class="top">
+            <div>
+                <h2 class="title" style="font-size:20px;margin-bottom:4px">Semakan Kad Matrik</h2>
+                <div class="muted">Pelajar aktif sesi semasa yang UID RFID belum direkodkan. Senarai ini membantu mengesan gambar atau kad yang masih perlukan tindakan.</div>
+            </div>
+            <span class="badge no"><?= number_format($kadSemakanCount) ?> belum daftar RFID</span>
+        </div>
+
+        <?php if ($kadSemakanCount < 1): ?>
+            <div class="alert ok" style="margin-top:14px">Semua pelajar aktif mempunyai UID RFID.</div>
+        <?php else: ?>
+            <div class="compact-note">Memaparkan maksimum 50 rekod. No. Kad ialah <code>personal.cardno</code>; UID RFID ialah <code>personal.em_cardno</code>.</div>
+            <div class="table-wrap" style="margin-top:12px">
+                <table>
+                    <thead>
+                    <tr>
+                        <th>Nama</th>
+                        <th>No. Matrik</th>
+                        <th>No. Kad</th>
+                        <th>Status</th>
+                        <th>Sebab / Tindakan</th>
+                    </tr>
+                    </thead>
+                    <tbody>
+                    <?php foreach ($kadSemakanDisplay as $kadRow): ?>
+                        <?php
+                            $kadStatus = (string)($kadRow['kad_issue_status'] ?? 'RFID Belum Daftar');
+                            $kadBadge = $kadStatus === 'Tiada Gambar' ? 'no' : ($kadStatus === 'Gambar Bermasalah' ? 'warn' : '');
+                            $kadMatrik = clean_matrik_audit((string)($kadRow['matrik'] ?? ''));
+                        ?>
+                        <tr>
+                            <td><strong><?= h((string)($kadRow['nama'] ?? '-')) ?></strong></td>
+                            <td><?= h($kadMatrik) ?></td>
+                            <td><?= trim((string)($kadRow['no_cetakan_kad'] ?? '')) !== '' ? h((string)$kadRow['no_cetakan_kad']) : '<span class="small">—</span>' ?></td>
+                            <td><span class="badge <?= h($kadBadge) ?>"><?= h($kadStatus) ?></span></td>
+                            <td>
+                                <?= h((string)($kadRow['kad_issue_reason'] ?? 'Semakan diperlukan.')) ?>
+                                <div style="margin-top:6px"><a class="btn ghost" href="?search=<?= rawurlencode($kadMatrik) ?>#bulkForm">Semak Gambar</a></div>
+                            </td>
+                        </tr>
+                    <?php endforeach; ?>
+                    </tbody>
+                </table>
+            </div>
+        <?php endif; ?>
+    </section>
 </div>
 
 <script>
