@@ -1,0 +1,6 @@
+Options -Indexes
+DirectoryIndex index.php
+
+<FilesMatch "\.(xlsx|xls|csv|json|log|ini|bak|sql)$">
+    Require all denied
+</FilesMatch>
