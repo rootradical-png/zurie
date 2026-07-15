@@ -1,8 +1,13 @@
-PATCH SIJIL KOKURIKULUM V3
+PATCH: BILANGAN GAMBAR & PAUTAN TERUS PELAJAR
 
-1. ZIP ini sengaja tiada folder zurie di aras atas.
-2. Extract terus ke G:\xampp\htdocs\zurie supaya fail sebenar overwrite.
-3. Dropdown memaparkan database legacy 2013 hingga tahun hadapan serta semua DB yang dikesan.
-4. Gambar pelajar dicari di http://i-sims.kmp.matrik.edu.my/esasi/image/
-5. Logo/cop dicari juga melalui direktori eSASI image. Jika fail asal tiada di server lama, salin logo ke folder image dalam Zurie menggunakan nama:
-   logokpm.png, logokmp.jpg, coplogokmp.png, signpeng.png
+Fail berubah:
+- pages/photo_audit.php
+- pages/photo_versions.php
+
+Perubahan:
+1. Audit Foto memaparkan bilangan fail/versi gambar SFTP bagi setiap pelajar.
+2. Klik bilangan tersebut terus membuka kumpulan No. Matrik berkenaan di halaman Versi Gambar.
+3. Butang pentadbir Versi Gambar memaparkan jumlah fail dalam manifest semasa.
+4. Kumpulan pelajar yang dibuka melalui pautan terus disorot dengan border biru.
+5. Kiraan menggunakan data photo_versions_manifest.json dan tidak membuka sambungan SFTP baharu.
+6. Jalankan Scan SFTP pada halaman Versi Gambar untuk menyegarkan kiraan selepas upload/delete.
